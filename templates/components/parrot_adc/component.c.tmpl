@@ -1,0 +1,22 @@
+#include "parrot_adc.h"
+#include "soc/soc_caps.h"
+
+static adc_oneshot_unit_handle_t units[SOC_ADC_PERIPH_NUM];
+
+esp_err_t parrot_adc_unit(adc_unit_t unit, adc_oneshot_unit_handle_t *handle)
+{
+    if (unit >= SOC_ADC_PERIPH_NUM) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (units[unit] == NULL) {
+        adc_oneshot_unit_init_cfg_t config = {
+            .unit_id = unit,
+        };
+        esp_err_t err = adc_oneshot_new_unit(&config, &units[unit]);
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+    *handle = units[unit];
+    return ESP_OK;
+}

@@ -1,0 +1,10 @@
+#pragma once
+
+// Analog input on GPIO{{.Pin}} ({{.Unit}}, {{.Channel}} on {{.Target}}).
+
+// Configures the ADC channel. Aborts if the ADC cannot be set up.
+void {{.Name}}_init(void);
+
+// Returns the raw conversion result, or -1 if the read failed (for example
+// when ADC2 is busy with Wi-Fi). The range depends on the chip's ADC bit width.
+int {{.Name}}_read_raw(void);

@@ -1,0 +1,30 @@
+#include "esp_adc/adc_oneshot.h"
+#include "esp_err.h"
+#include "parrot_adc.h"
+#include "{{.Name}}.h"
+
+// GPIO{{.Pin}} on {{.Target}}, mapped by Parrot from the target definition.
+#define {{.Macro}}_ADC_UNIT    {{.Unit}}
+#define {{.Macro}}_ADC_CHANNEL {{.Channel}}
+
+static adc_oneshot_unit_handle_t {{.Name}}_adc;
+
+void {{.Name}}_init(void)
+{
+    ESP_ERROR_CHECK(parrot_adc_unit({{.Macro}}_ADC_UNIT, &{{.Name}}_adc));
+
+    adc_oneshot_chan_cfg_t config = {
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel({{.Name}}_adc, {{.Macro}}_ADC_CHANNEL, &config));
+}
+
+int {{.Name}}_read_raw(void)
+{
+    int raw;
+    if (adc_oneshot_read({{.Name}}_adc, {{.Macro}}_ADC_CHANNEL, &raw) != ESP_OK) {
+        return -1;
+    }
+    return raw;
+}

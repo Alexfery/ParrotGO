@@ -1,0 +1,9 @@
+#pragma once
+
+#include <stdbool.h>
+
+// Button on GPIO{{.Pin}}, wired between the GPIO and GND.
+// The internal pull-up keeps the line HIGH when released; pressing pulls it LOW.
+
+void {{.Name}}_init(void);
+bool {{.Name}}_is_pressed(void);

@@ -1,0 +1,36 @@
+#include <stdbool.h>
+
+#include "driver/gpio.h"
+#include "{{.Name}}.h"
+
+#define {{.Macro}}_GPIO GPIO_NUM_{{.Pin}}
+
+static bool {{.Name}}_state = false;
+
+static void {{.Name}}_set(bool on)
+{
+    gpio_set_level({{.Macro}}_GPIO, on);
+    {{.Name}}_state = on;
+}
+
+void {{.Name}}_init(void)
+{
+    gpio_reset_pin({{.Macro}}_GPIO);
+    gpio_set_direction({{.Macro}}_GPIO, GPIO_MODE_OUTPUT);
+    {{.Name}}_set(false);
+}
+
+void {{.Name}}_on(void)
+{
+    {{.Name}}_set(true);
+}
+
+void {{.Name}}_off(void)
+{
+    {{.Name}}_set(false);
+}
+
+void {{.Name}}_toggle(void)
+{
+    {{.Name}}_set(!{{.Name}}_state);
+}

@@ -1,0 +1,54 @@
+#include <stddef.h>
+
+#include "driver/i2c_master.h"
+#include "esp_err.h"
+#include "{{.Name}}.h"
+
+// GPIO{{.SDA}} and GPIO{{.SCL}} on {{.Target}}, checked by Parrot: both are input and
+// output GPIOs with pull resistors.
+#define {{.Macro}}_SDA_GPIO GPIO_NUM_{{.SDA}}
+#define {{.Macro}}_SCL_GPIO GPIO_NUM_{{.SCL}}
+
+static i2c_master_bus_handle_t {{.Name}}_bus = NULL;
+
+esp_err_t {{.Name}}_init(void)
+{
+    if ({{.Name}}_bus != NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    i2c_master_bus_config_t config = {
+        // -1: ESP-IDF picks a free HP I2C controller. They are
+        // interchangeable; Parrot checks that the project's buses fit.
+        .i2c_port = -1,
+        .sda_io_num = {{.Macro}}_SDA_GPIO,
+        .scl_io_num = {{.Macro}}_SCL_GPIO,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        // Weak: see {{.Name}}.h about external pull-up resistors.
+        .flags.enable_internal_pullup = true,
+    };
+    // No SCL frequency here: each device sets its own.
+    i2c_master_bus_handle_t bus;
+    esp_err_t err = i2c_new_master_bus(&config, &bus);
+    if (err == ESP_OK) {
+        {{.Name}}_bus = bus;
+    }
+    return err;
+}
+
+esp_err_t {{.Name}}_deinit(void)
+{
+    if ({{.Name}}_bus == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    esp_err_t err = i2c_del_master_bus({{.Name}}_bus);
+    if (err == ESP_OK) {
+        {{.Name}}_bus = NULL;
+    }
+    return err;
+}
+
+i2c_master_bus_handle_t {{.Name}}_get_handle(void)
+{
+    return {{.Name}}_bus;
+}

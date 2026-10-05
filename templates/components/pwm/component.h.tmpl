@@ -1,0 +1,15 @@
+#pragma once
+
+#include <stdint.h>
+
+// PWM output on GPIO{{.Pin}} at {{.Frequency}} Hz, driven by the LEDC peripheral.
+
+// Configures the LEDC timer and channel; the output starts at 0%.
+// Aborts if LEDC cannot be set up.
+void {{.Name}}_init(void);
+
+// Sets the duty cycle in percent. Values above 100 are treated as 100.
+void {{.Name}}_set_duty(uint32_t duty_percent);
+
+// Sets the duty cycle to 0%: the output stays low.
+void {{.Name}}_stop(void);

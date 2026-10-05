@@ -1,0 +1,7 @@
+idf_component_register(
+    SRCS "{{.Name}}.c"
+    INCLUDE_DIRS "include"
+    # REQUIRES, not PRIV_REQUIRES: {{.Name}}.h includes driver/i2c_master.h, so
+    # every component using this bus needs esp_driver_i2c's headers too.
+    REQUIRES esp_driver_i2c
+)

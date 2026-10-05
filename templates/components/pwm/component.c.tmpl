@@ -1,0 +1,56 @@
+#include "driver/ledc.h"
+#include "esp_err.h"
+#include "{{.Name}}.h"
+
+// GPIO{{.Pin}} on {{.Target}}: {{.Frequency}} Hz, {{.Bits}}-bit duty resolution.
+// The LEDC timer and channel are allocated by Parrot from parrot.json. PWM
+// components with the same frequency share a timer, and configuring a timer
+// restarts it, so call every PWM init function before setting duties.
+#define {{.Macro}}_GPIO       {{.Pin}}
+#define {{.Macro}}_MODE       LEDC_LOW_SPEED_MODE
+#define {{.Macro}}_TIMER      {{.Timer}}
+#define {{.Macro}}_CHANNEL    {{.Channel}}
+#define {{.Macro}}_FREQUENCY  {{.Frequency}}
+#define {{.Macro}}_RESOLUTION {{.Resolution}}
+#define {{.Macro}}_CLOCK      {{.Clock}}
+
+// Raw duty for 100%. LEDC accepts duties in [0, 2^resolution], except that
+// 2^resolution is invalid at the timer's maximum resolution.
+#define {{.Macro}}_MAX_DUTY   {{.MaxDuty}}U
+
+void {{.Name}}_init(void)
+{
+    ledc_timer_config_t timer_config = {
+        .speed_mode = {{.Macro}}_MODE,
+        .timer_num = {{.Macro}}_TIMER,
+        .duty_resolution = {{.Macro}}_RESOLUTION,
+        .freq_hz = {{.Macro}}_FREQUENCY,
+        .clk_cfg = {{.Macro}}_CLOCK,
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&timer_config));
+
+    ledc_channel_config_t channel_config = {
+        .gpio_num = {{.Macro}}_GPIO,
+        .speed_mode = {{.Macro}}_MODE,
+        .channel = {{.Macro}}_CHANNEL,
+        .timer_sel = {{.Macro}}_TIMER,
+        .duty = 0,
+        .hpoint = 0,
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&channel_config));
+}
+
+void {{.Name}}_set_duty(uint32_t duty_percent)
+{
+    if (duty_percent > 100) {
+        duty_percent = 100;
+    }
+    uint32_t duty = (uint32_t)(((uint64_t)duty_percent * {{.Macro}}_MAX_DUTY) / 100);
+    ESP_ERROR_CHECK(ledc_set_duty({{.Macro}}_MODE, {{.Macro}}_CHANNEL, duty));
+    ESP_ERROR_CHECK(ledc_update_duty({{.Macro}}_MODE, {{.Macro}}_CHANNEL));
+}
+
+void {{.Name}}_stop(void)
+{
+    {{.Name}}_set_duty(0);
+}

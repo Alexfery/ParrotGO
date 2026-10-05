@@ -1,0 +1,27 @@
+#pragma once
+
+#include "driver/i2c_master.h"
+#include "esp_err.h"
+
+// I2C master bus on GPIO{{.SDA}} (SDA) and GPIO{{.SCL}} (SCL), shared by the I2C
+// devices attached to it. Devices are added with
+// i2c_master_bus_add_device({{.Name}}_get_handle(), &device_config, &device),
+// and each one sets its own SCL frequency (device_config.scl_speed_hz).
+//
+// Pull-ups: the internal pull-ups of SDA and SCL are enabled. They are weak,
+// fine for short wires and simulation, but usually too weak for real buses,
+// especially at 400 kHz: add external pull-up resistors from SDA and SCL to
+// 3.3 V on the hardware.
+
+// Creates the bus. ESP-IDF picks a free I2C controller. Returns the error of
+// i2c_new_master_bus (e.g. ESP_ERR_NOT_FOUND when no controller is free), or
+// ESP_ERR_INVALID_STATE if the bus already exists.
+esp_err_t {{.Name}}_init(void);
+
+// Deletes the bus. Remove its devices first (i2c_master_bus_rm_device):
+// returns ESP_ERR_INVALID_STATE while devices are attached or before
+// {{.Name}}_init.
+esp_err_t {{.Name}}_deinit(void);
+
+// Returns the bus handle, or NULL until {{.Name}}_init succeeds.
+i2c_master_bus_handle_t {{.Name}}_get_handle(void);

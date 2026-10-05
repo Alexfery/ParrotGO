@@ -1,0 +1,43 @@
+#pragma once
+
+#include "esp_err.h"
+
+// Bosch BME280 temperature, pressure and humidity sensor, reached through the
+// I2C device {{.Device}}, which sets its address and bus.
+//
+// Lifecycle: the application initializes the layers below this one first,
+// bottom up; {{.Name}}_init() never does it for them:
+//
+//   1. the I2C bus of {{.Device}}, with its own <bus>_init()
+//   2. the device, with {{.Device}}_init()
+//   3. the sensor, with {{.Name}}_init()
+//
+// Settings: oversampling x1 for the three measurements, IIR filter off, and
+// forced mode: the sensor sleeps between two {{.Name}}_read() calls.
+
+// One reading, compensated with the sensor's own calibration coefficients.
+typedef struct {
+    float temperature_c;    // degrees Celsius
+    float pressure_pa;      // pascals (100 Pa = 1 hPa)
+    float humidity_percent; // relative humidity, 0 to 100 %
+} {{.Name}}_reading_t;
+
+// Checks that the device is a BME280, resets it, reads its calibration
+// coefficients and configures it. Returns ESP_ERR_NOT_FOUND if the device
+// answers but is not a BME280, ESP_ERR_TIMEOUT if the sensor does not finish
+// its reset, otherwise the error of the {{.Device}} transaction that
+// failed (e.g. ESP_ERR_INVALID_STATE before {{.Device}}_init()).
+// Can be called again, e.g. after the sensor lost power; until it succeeds,
+// {{.Name}}_read() returns ESP_ERR_INVALID_STATE.
+esp_err_t {{.Name}}_init(void);
+
+// Measures temperature, pressure and humidity once and stores the result in
+// *reading. Blocks the calling task until the measurement is done, sleeping
+// rather than busy-waiting: 10 to 20 ms with the default FreeRTOS tick of
+// 100 Hz. Returns ESP_ERR_INVALID_ARG if
+// reading is NULL, ESP_ERR_INVALID_STATE before {{.Name}}_init() succeeds,
+// ESP_ERR_TIMEOUT if the measurement does not finish, ESP_ERR_INVALID_RESPONSE
+// if the calibration coefficients cannot compensate the pressure, otherwise
+// the error of the {{.Device}} transaction that failed. *reading is
+// only written on success.
+esp_err_t {{.Name}}_read({{.Name}}_reading_t *reading);

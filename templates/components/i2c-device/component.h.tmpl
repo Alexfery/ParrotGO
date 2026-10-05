@@ -1,0 +1,48 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "driver/i2c_master.h"
+#include "esp_err.h"
+
+// I2C device at address {{.Address}} on the "{{.Bus}}" bus, with SCL at {{.Frequency}} Hz.
+//
+// Generic transport: these functions move bytes. What the bytes mean is up to
+// the driver of the actual device, which can build on them or on
+// {{.Name}}_get_handle().
+//
+// Lifecycle: {{.Bus}}_init() creates the bus, {{.Name}}_init() adds this device to
+// it. {{.Name}}_deinit() removes this device only: the bus stays, for its other
+// devices.
+//
+// timeout_ms bounds one transaction, in milliseconds; -1 waits forever.
+
+// Adds the device to the bus. Returns ESP_ERR_INVALID_STATE if the bus does
+// not exist yet (call {{.Bus}}_init() first) or the device was already added,
+// otherwise the error of i2c_master_bus_add_device.
+esp_err_t {{.Name}}_init(void);
+
+// Removes the device from the bus, which stays. Returns ESP_ERR_INVALID_STATE
+// before {{.Name}}_init, otherwise the error of i2c_master_bus_rm_device.
+esp_err_t {{.Name}}_deinit(void);
+
+// Returns the device handle, for drivers built on this device, or NULL until
+// {{.Name}}_init succeeds.
+i2c_master_dev_handle_t {{.Name}}_get_handle(void);
+
+// The transactions below return ESP_ERR_INVALID_STATE before {{.Name}}_init,
+// otherwise the error of ESP-IDF: ESP_ERR_INVALID_RESPONSE when the device
+// does not acknowledge (NACK), ESP_ERR_TIMEOUT after timeout_ms.
+
+// Writes length bytes: START, address + W, data, STOP.
+esp_err_t {{.Name}}_transmit(const uint8_t *data, size_t length, int timeout_ms);
+
+// Reads length bytes: START, address + R, data, STOP.
+esp_err_t {{.Name}}_receive(uint8_t *data, size_t length, int timeout_ms);
+
+// Writes, then reads in the same transaction: START, address + W, write_data,
+// repeated START, address + R, read_data, STOP. The usual way to read a
+// register: write its number, then read its value.
+esp_err_t {{.Name}}_transmit_receive(const uint8_t *write_data, size_t write_length,
+                                     uint8_t *read_data, size_t read_length, int timeout_ms);

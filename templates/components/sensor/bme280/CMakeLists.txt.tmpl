@@ -1,0 +1,8 @@
+idf_component_register(
+    SRCS "{{.Name}}.c"
+    INCLUDE_DIRS "include"
+    # Private: only {{.Name}}.c uses the device, through {{.Device}}.h;
+    # {{.Name}}.h needs nothing but esp_err.h. The device brings its bus and
+    # esp_driver_i2c itself, and FreeRTOS is required by every component.
+    PRIV_REQUIRES {{.Device}}
+)

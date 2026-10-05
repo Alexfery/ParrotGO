@@ -1,0 +1,29 @@
+package targets
+
+// esp32S3 describes the ESP32-S3 SoC.
+// Sources: ESP32-S3 Series Datasheet v2.2 (Tables 2-4, 2-8, 2-14);
+// ESP-IDF components/soc/esp32s3/include/soc/adc_channel.h;
+// ESP-IDF soc/esp32s3/include/soc/soc_caps.h (LEDC, SOC_HP_I2C_NUM) and clk_tree_defs.h (LEDC);
+// https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/gpio.html
+//
+// GPIO22-25 do not exist. GPIO33-37 are also used by octal flash/PSRAM on
+// some chip variants; that depends on the variant, so they are not reserved
+// here. On ESP32-S3R8V/R16V, GPIO47-48 work at 1.8 V instead of 3.3 V.
+var esp32S3 = Target{
+	ID:          "esp32-s3",
+	DisplayName: "ESP32-S3",
+	IDFTarget:   "esp32s3",
+	LEDC: LEDC{
+		Timers: 4, Channels: 8, MaxResolution: 14,
+		ClockSource: "LEDC_USE_APB_CLK", ClockHz: 80_000_000,
+	},
+	I2C: I2C{HPControllers: 2},
+	pins: pinMap(
+		withPins(ioPin, 0),
+		adcPins(ioPin, 1, 0, span(1, 10)...),  // ADC1 CH0-9
+		adcPins(ioPin, 2, 0, span(11, 20)...), // ADC2 CH0-9
+		withPins(ioPin, 21),
+		withPins(flashPin, span(26, 32)...),
+		withPins(ioPin, span(33, 48)...),
+	),
+}

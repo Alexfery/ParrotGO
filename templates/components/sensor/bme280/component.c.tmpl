@@ -1,0 +1,372 @@
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "esp_err.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "{{.Device}}.h"
+#include "{{.Name}}.h"
+
+// Bosch BME280 driver. Registers, calibration layout, compensation formulas
+// and timings come from the BME280 data sheet (BST-BME280-DS001, revision
+// 1.24); the section and table numbers below refer to it.
+//
+// The sensor is only reached through {{.Device}}, as registers to read
+// and write: the address, the bus and its GPIOs belong to the components
+// below this one.
+
+// Registers (5.3, Table 18).
+#define REG_CALIB_TP  0x88 // calib00..calib25: dig_T1..dig_P9, then dig_H1 at 0xA1
+#define REG_CHIP_ID   0xD0
+#define REG_RESET     0xE0
+#define REG_CALIB_H   0xE1 // calib26..calib32: dig_H2..dig_H6
+#define REG_CTRL_HUM  0xF2
+#define REG_STATUS    0xF3
+#define REG_CTRL_MEAS 0xF4
+#define REG_CONFIG    0xF5
+#define REG_DATA      0xF7 // press_msb .. hum_lsb
+
+#define CALIB_TP_LENGTH 26 // 0x88..0xA1
+#define CALIB_H_LENGTH  7  // 0xE1..0xE7
+#define DATA_LENGTH     8  // 0xF7..0xFE
+
+#define CHIP_ID       0x60 // 5.4.1
+#define RESET_COMMAND 0xB6 // 5.4.2
+
+// status (5.4.4, Table 21).
+#define STATUS_MEASURING 0x08 // bit 3: a conversion is running
+#define STATUS_IM_UPDATE 0x01 // bit 0: the NVM is being copied to the image registers
+
+// Settings of 3.5.1 "Weather monitoring" (Table 7): oversampling x1 for the
+// three measurements (Tables 20, 23, 24), filter off (Table 28), forced mode
+// (Table 25).
+#define OVERSAMPLING_X1 0x01
+#define MODE_FORCED     0x01
+#define CTRL_HUM_VALUE  OVERSAMPLING_X1 // osrs_h[2:0]
+#define CTRL_MEAS_VALUE ((OVERSAMPLING_X1 << 5) | (OVERSAMPLING_X1 << 2) | MODE_FORCED) // osrs_t[7:5], osrs_p[4:2], mode[1:0]
+#define CONFIG_VALUE    0x00 // t_sb unused in forced mode, filter off, no 3-wire SPI
+
+// Timings, in milliseconds.
+#define STARTUP_TIME_MS         2  // t_startup, Table 1: until the sensor answers after a reset
+#define MEASUREMENT_TIME_MAX_MS 10 // t_measure,max (9.1): 1.25 + 2.3 + 2.875 + 2.875 = 9.3 ms at x1
+#define STATUS_POLL_INTERVAL_MS 2  // between two reads of the status register
+#define STATUS_POLL_ATTEMPTS    10 // reads of the status register before ESP_ERR_TIMEOUT
+#define I2C_TIMEOUT_MS          100 // per transaction
+
+// Calibration coefficients, with the names and types of Table 16.
+typedef struct {
+    uint16_t dig_T1;
+    int16_t dig_T2;
+    int16_t dig_T3;
+    uint16_t dig_P1;
+    int16_t dig_P2;
+    int16_t dig_P3;
+    int16_t dig_P4;
+    int16_t dig_P5;
+    int16_t dig_P6;
+    int16_t dig_P7;
+    int16_t dig_P8;
+    int16_t dig_P9;
+    uint8_t dig_H1;
+    int16_t dig_H2;
+    uint8_t dig_H3;
+    int16_t dig_H4;
+    int16_t dig_H5;
+    int8_t dig_H6;
+} bme280_calibration_t;
+
+// Uncompensated measurement (4.): pressure and temperature on 20 bits,
+// humidity on 16 bits, in signed 32-bit integers as the compensation formulas
+// expect them (4.2.3).
+typedef struct {
+    int32_t adc_P;
+    int32_t adc_T;
+    int32_t adc_H;
+} bme280_raw_t;
+
+// Read from the sensor by {{.Name}}_init(), never used before it succeeds.
+static bme280_calibration_t calibration;
+static bool initialized = false;
+
+// --- Decoding: register bytes to values ---------------------------------
+
+// Two's complement, without relying on the implementation-defined conversion
+// of out-of-range values to signed types.
+static int8_t to_s8(uint8_t value)
+{
+    return value < 0x80 ? (int8_t)value : (int8_t)((int)value - 0x100);
+}
+
+static int16_t to_s16(uint16_t value)
+{
+    return value < 0x8000 ? (int16_t)value : (int16_t)((int32_t)value - 0x10000);
+}
+
+// Compensation words are stored LSB first (Table 16: "[7:0] / [15:8]").
+static uint16_t le_u16(const uint8_t *bytes)
+{
+    return (uint16_t)(bytes[0] | ((uint16_t)bytes[1] << 8));
+}
+
+static int16_t le_s16(const uint8_t *bytes)
+{
+    return to_s16(le_u16(bytes));
+}
+
+// dig_H4 and dig_H5 are 12-bit values that share register 0xE5 (Table 16):
+//
+//   dig_H4[11:4] = 0xE4[7:0]    dig_H4[3:0] = 0xE5[3:0]
+//   dig_H5[11:4] = 0xE6[7:0]    dig_H5[3:0] = 0xE5[7:4]
+//
+// Both are signed: their sign is bit 7 of 0xE4 and 0xE6, the bytes that hold
+// bits 11:4, which are read as int8_t and scaled by 16 (as in
+// parse_humidity_calib_data() of Bosch's BME280 SensorAPI).
+static int16_t decode_h4(uint8_t e4, uint8_t e5)
+{
+    return (int16_t)(to_s8(e4) * 16 + (e5 & 0x0F));
+}
+
+static int16_t decode_h5(uint8_t e5, uint8_t e6)
+{
+    return (int16_t)(to_s8(e6) * 16 + (e5 >> 4));
+}
+
+// tp holds registers 0x88..0xA1 and h registers 0xE1..0xE7 (Table 16).
+static void parse_calibration(const uint8_t tp[CALIB_TP_LENGTH], const uint8_t h[CALIB_H_LENGTH],
+                              bme280_calibration_t *cal)
+{
+    cal->dig_T1 = le_u16(&tp[0]);  // 0x88/0x89
+    cal->dig_T2 = le_s16(&tp[2]);  // 0x8A/0x8B
+    cal->dig_T3 = le_s16(&tp[4]);  // 0x8C/0x8D
+    cal->dig_P1 = le_u16(&tp[6]);  // 0x8E/0x8F
+    cal->dig_P2 = le_s16(&tp[8]);  // 0x90/0x91
+    cal->dig_P3 = le_s16(&tp[10]); // 0x92/0x93
+    cal->dig_P4 = le_s16(&tp[12]); // 0x94/0x95
+    cal->dig_P5 = le_s16(&tp[14]); // 0x96/0x97
+    cal->dig_P6 = le_s16(&tp[16]); // 0x98/0x99
+    cal->dig_P7 = le_s16(&tp[18]); // 0x9A/0x9B
+    cal->dig_P8 = le_s16(&tp[20]); // 0x9C/0x9D
+    cal->dig_P9 = le_s16(&tp[22]); // 0x9E/0x9F
+    cal->dig_H1 = tp[25];          // 0xA1 (0xA0 holds no coefficient)
+    cal->dig_H2 = le_s16(&h[0]);   // 0xE1/0xE2
+    cal->dig_H3 = h[2];            // 0xE3
+    cal->dig_H4 = decode_h4(h[3], h[4]); // 0xE4, 0xE5[3:0]
+    cal->dig_H5 = decode_h5(h[4], h[5]); // 0xE5[7:4], 0xE6
+    cal->dig_H6 = to_s8(h[6]);     // 0xE7
+}
+
+// data holds registers 0xF7..0xFE (5.4.7 to 5.4.9): msb, lsb and the 4 bits
+// of xlsb[7:4] for pressure and temperature, msb and lsb for humidity.
+static void parse_raw(const uint8_t data[DATA_LENGTH], bme280_raw_t *raw)
+{
+    raw->adc_P = (int32_t)(((uint32_t)data[0] << 12) | ((uint32_t)data[1] << 4) | ((uint32_t)data[2] >> 4));
+    raw->adc_T = (int32_t)(((uint32_t)data[3] << 12) | ((uint32_t)data[4] << 4) | ((uint32_t)data[5] >> 4));
+    raw->adc_H = (int32_t)(((uint32_t)data[6] << 8) | (uint32_t)data[7]);
+}
+
+// --- Compensation (4.2.3) ------------------------------------------------
+//
+// The data sheet's integer formulas. Their ">>" on a negative value is an
+// arithmetic shift, rounding towards minus infinity, and their "<<" on a
+// negative value multiplies by a power of two; C leaves the first
+// implementation-defined and the second undefined, so they are written here
+// with asr() and multiplications. The temperature and humidity formulas,
+// 32-bit in the data sheet, are evaluated with 64-bit intermediates: the same
+// results whenever the 32-bit ones do not overflow, and room for raw values
+// far outside the sensor's range (e.g. after a corrupted transfer), which
+// would overflow 32 bits.
+
+// value >> bits, rounding towards minus infinity for negative values too.
+static int64_t asr(int64_t value, unsigned int bits)
+{
+    return value >= 0 ? value >> bits : ~(~value >> bits);
+}
+
+// BME280_compensate_T_int32: temperature in 0.01 °C ("5123" is 51.23 °C).
+// Stores in *t_fine the fine temperature the two other formulas use.
+static int32_t compensate_temperature(const bme280_calibration_t *cal, int32_t adc_T, int32_t *t_fine)
+{
+    int64_t var1 = asr((asr(adc_T, 3) - (int64_t)cal->dig_T1 * 2) * cal->dig_T2, 11);
+    int64_t var2 = asr(asr((asr(adc_T, 4) - cal->dig_T1) * (asr(adc_T, 4) - cal->dig_T1), 12) * cal->dig_T3, 14);
+    *t_fine = (int32_t)(var1 + var2);
+    return (int32_t)asr((int64_t)*t_fine * 5 + 128, 8);
+}
+
+// BME280_compensate_P_int64: pressure in Pa in Q24.8 format ("24674867" is
+// 24674867 / 256 = 96386.2 Pa). Returns 0, as the data sheet does, when the
+// coefficients would divide by zero.
+static uint32_t compensate_pressure(const bme280_calibration_t *cal, int32_t adc_P, int32_t t_fine)
+{
+    int64_t var1 = (int64_t)t_fine - 128000;
+    int64_t var2 = var1 * var1 * cal->dig_P6;
+    var2 = var2 + var1 * cal->dig_P5 * ((int64_t)1 << 17);
+    var2 = var2 + (int64_t)cal->dig_P4 * ((int64_t)1 << 35);
+    var1 = asr(var1 * var1 * cal->dig_P3, 8) + var1 * cal->dig_P2 * ((int64_t)1 << 12);
+    var1 = asr((((int64_t)1 << 47) + var1) * cal->dig_P1, 33);
+    if (var1 == 0) {
+        return 0;
+    }
+    int64_t p = (int64_t)1048576 - adc_P;
+    p = (p * ((int64_t)1 << 31) - var2) * 3125 / var1;
+    var1 = asr(cal->dig_P9 * asr(p, 13) * asr(p, 13), 25);
+    var2 = asr(cal->dig_P8 * p, 19);
+    p = asr(p + var1 + var2, 8) + (int64_t)cal->dig_P7 * 16;
+    return (uint32_t)p;
+}
+
+// bme280_compensate_H_int32: relative humidity in % in Q22.10 format
+// ("47445" is 47445 / 1024 = 46.333 %RH), from 0 to 100 %.
+static uint32_t compensate_humidity(const bme280_calibration_t *cal, int32_t adc_H, int32_t t_fine)
+{
+    int64_t v = (int64_t)t_fine - 76800;
+    v = asr((int64_t)adc_H * 16384 - (int64_t)cal->dig_H4 * 1048576 - cal->dig_H5 * v + 16384, 15) *
+        asr((asr(asr(v * cal->dig_H6, 10) * (asr(v * cal->dig_H3, 11) + 32768), 10) + 2097152) * cal->dig_H2 + 8192, 14);
+    v = v - asr(asr(asr(v, 15) * asr(v, 15), 7) * cal->dig_H1, 4);
+    v = v < 0 ? 0 : v;
+    v = v > 419430400 ? 419430400 : v;
+    return (uint32_t)asr(v, 12);
+}
+
+// --- Registers, through {{.Device}} ------------------------------------
+
+// Reads length registers from reg on: the register address, a repeated START
+// and the data, in one transaction; the sensor increments the address
+// itself (6.2.2).
+static esp_err_t read_registers(uint8_t reg, uint8_t *data, size_t length)
+{
+    return {{.Device}}_transmit_receive(&reg, 1, data, length, I2C_TIMEOUT_MS);
+}
+
+// Writes one register: its address, then its value (6.2.1).
+static esp_err_t write_register(uint8_t reg, uint8_t value)
+{
+    const uint8_t bytes[2] = {reg, value};
+    return {{.Device}}_transmit(bytes, sizeof(bytes), I2C_TIMEOUT_MS);
+}
+
+// Blocks the calling task for at least ms milliseconds, without busy-waiting.
+// vTaskDelay(n) returns on the n-th tick interrupt and the first one can come
+// right away, so the tick count is rounded up, plus one.
+static void delay_ms(uint32_t ms)
+{
+    vTaskDelay((TickType_t)((ms * configTICK_RATE_HZ + 999) / 1000 + 1));
+}
+
+// Waits first_ms, then reads the status register until bit is clear, at most
+// STATUS_POLL_ATTEMPTS times, STATUS_POLL_INTERVAL_MS apart.
+static esp_err_t wait_status_clear(uint8_t bit, uint32_t first_ms)
+{
+    delay_ms(first_ms);
+    for (int attempt = 1;; attempt++) {
+        uint8_t status;
+        esp_err_t err = read_registers(REG_STATUS, &status, 1);
+        if (err != ESP_OK) {
+            return err;
+        }
+        if ((status & bit) == 0) {
+            return ESP_OK;
+        }
+        if (attempt == STATUS_POLL_ATTEMPTS) {
+            return ESP_ERR_TIMEOUT;
+        }
+        delay_ms(STATUS_POLL_INTERVAL_MS);
+    }
+}
+
+// --- Public API ----------------------------------------------------------
+
+esp_err_t {{.Name}}_init(void)
+{
+    initialized = false;
+
+    uint8_t chip_id;
+    esp_err_t err = read_registers(REG_CHIP_ID, &chip_id, 1);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (chip_id != CHIP_ID) {
+        return ESP_ERR_NOT_FOUND; // something answers, but not a BME280: leave it alone
+    }
+
+    // Back to sleep mode and default settings, whatever ran before (e.g.
+    // normal mode, left by an earlier firmware), then wait for the copy of
+    // the calibration NVM to the image registers.
+    err = write_register(REG_RESET, RESET_COMMAND);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = wait_status_clear(STATUS_IM_UPDATE, STARTUP_TIME_MS);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    uint8_t calib_tp[CALIB_TP_LENGTH];
+    err = read_registers(REG_CALIB_TP, calib_tp, sizeof(calib_tp));
+    if (err != ESP_OK) {
+        return err;
+    }
+    uint8_t calib_h[CALIB_H_LENGTH];
+    err = read_registers(REG_CALIB_H, calib_h, sizeof(calib_h));
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    // In sleep mode, where writes to config are not ignored (5.4.6).
+    err = write_register(REG_CONFIG, CONFIG_VALUE);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    parse_calibration(calib_tp, calib_h, &calibration);
+    initialized = true;
+    return ESP_OK;
+}
+
+esp_err_t {{.Name}}_read({{.Name}}_reading_t *reading)
+{
+    if (reading == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Forced mode (3.3.3): one measurement, then back to sleep. ctrl_hum
+    // only takes effect when ctrl_meas is written (5.4.3), so it goes first.
+    esp_err_t err = write_register(REG_CTRL_HUM, CTRL_HUM_VALUE);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = write_register(REG_CTRL_MEAS, CTRL_MEAS_VALUE);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = wait_status_clear(STATUS_MEASURING, MEASUREMENT_TIME_MAX_MS);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    // One burst read, so that the three values come from the same
+    // measurement (4.).
+    uint8_t data[DATA_LENGTH];
+    err = read_registers(REG_DATA, data, sizeof(data));
+    if (err != ESP_OK) {
+        return err;
+    }
+    bme280_raw_t raw;
+    parse_raw(data, &raw);
+
+    int32_t t_fine;
+    int32_t temperature = compensate_temperature(&calibration, raw.adc_T, &t_fine);
+    uint32_t pressure = compensate_pressure(&calibration, raw.adc_P, t_fine);
+    uint32_t humidity = compensate_humidity(&calibration, raw.adc_H, t_fine);
+    if (pressure == 0) {
+        return ESP_ERR_INVALID_RESPONSE; // the coefficients would divide by zero
+    }
+
+    reading->temperature_c = (float)temperature / 100.0f;
+    reading->pressure_pa = (float)pressure / 256.0f;
+    reading->humidity_percent = (float)humidity / 1024.0f;
+    return ESP_OK;
+}

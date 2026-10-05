@@ -1,0 +1,8 @@
+idf_component_register(
+    SRCS "{{.Name}}.c"
+    INCLUDE_DIRS "include"
+    # Public: {{.Name}}.h exposes i2c_master_dev_handle_t from driver/i2c_master.h.
+    REQUIRES esp_driver_i2c
+    # Private: only {{.Name}}.c uses the bus, through {{.Bus}}.h.
+    PRIV_REQUIRES {{.Bus}}
+)

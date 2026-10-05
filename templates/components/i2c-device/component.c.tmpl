@@ -1,0 +1,77 @@
+#include <stddef.h>
+#include <stdint.h>
+
+#include "driver/i2c_master.h"
+#include "esp_err.h"
+#include "{{.Bus}}.h"
+#include "{{.Name}}.h"
+
+static i2c_master_dev_handle_t {{.Name}}_handle = NULL;
+
+esp_err_t {{.Name}}_init(void)
+{
+    if ({{.Name}}_handle != NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    // The bus belongs to {{.Bus}}: this device uses it, never creates it.
+    i2c_master_bus_handle_t bus = {{.Bus}}_get_handle();
+    if (bus == NULL) {
+        return ESP_ERR_INVALID_STATE; // {{.Bus}}_init() was not called
+    }
+    i2c_device_config_t config = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        // 7-bit address, without the R/W bit: ESP-IDF adds it.
+        .device_address = {{.Address}},
+        .scl_speed_hz = {{.Frequency}},
+    };
+    i2c_master_dev_handle_t handle;
+    esp_err_t err = i2c_master_bus_add_device(bus, &config, &handle);
+    if (err == ESP_OK) {
+        {{.Name}}_handle = handle;
+    }
+    return err;
+}
+
+esp_err_t {{.Name}}_deinit(void)
+{
+    if ({{.Name}}_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    // Removes the device only; {{.Bus}}_deinit() deletes the bus.
+    esp_err_t err = i2c_master_bus_rm_device({{.Name}}_handle);
+    if (err == ESP_OK) {
+        {{.Name}}_handle = NULL;
+    }
+    return err;
+}
+
+i2c_master_dev_handle_t {{.Name}}_get_handle(void)
+{
+    return {{.Name}}_handle;
+}
+
+esp_err_t {{.Name}}_transmit(const uint8_t *data, size_t length, int timeout_ms)
+{
+    if ({{.Name}}_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return i2c_master_transmit({{.Name}}_handle, data, length, timeout_ms);
+}
+
+esp_err_t {{.Name}}_receive(uint8_t *data, size_t length, int timeout_ms)
+{
+    if ({{.Name}}_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return i2c_master_receive({{.Name}}_handle, data, length, timeout_ms);
+}
+
+esp_err_t {{.Name}}_transmit_receive(const uint8_t *write_data, size_t write_length,
+                                     uint8_t *read_data, size_t read_length, int timeout_ms)
+{
+    if ({{.Name}}_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return i2c_master_transmit_receive({{.Name}}_handle, write_data, write_length,
+                                       read_data, read_length, timeout_ms);
+}

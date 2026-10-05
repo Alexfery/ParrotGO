@@ -1,0 +1,17 @@
+#include "driver/gpio.h"
+#include "{{.Name}}.h"
+
+#define {{.Macro}}_GPIO GPIO_NUM_{{.Pin}}
+
+void {{.Name}}_init(void)
+{
+    gpio_reset_pin({{.Macro}}_GPIO);
+    gpio_set_direction({{.Macro}}_GPIO, GPIO_MODE_INPUT);
+    gpio_set_pull_mode({{.Macro}}_GPIO, GPIO_PULLUP_ONLY);
+}
+
+// Active low: released = HIGH (1), pressed = LOW (0).
+bool {{.Name}}_is_pressed(void)
+{
+    return gpio_get_level({{.Macro}}_GPIO) == 0;
+}
