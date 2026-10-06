@@ -4,8 +4,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-
-	"parrot/internal/espidf"
 )
 
 var flashCmd = &cobra.Command{
@@ -33,16 +31,14 @@ func runFlash(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	target, runner, err := openIDFProject(cmd)
+	p, err := openProject(cmd)
 	if err != nil {
 		return err
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Parrot flash\n\nTarget: %s\nPort: %s\n\nFlashing device...\n\n", target.DisplayName, portLabel(port))
-	flasher := espidf.Flasher{Runner: runner}
-	opts := espidf.FlashOptions{ProjectDir: ".", Target: target, Port: port}
-	if err := flasher.Flash(cmd.Context(), opts); err != nil {
+	fmt.Fprintf(out, "Parrot flash\n\n%sPort: %s\n\nFlashing device...\n\n", hardwareLines(p.Hardware()), portLabel(port))
+	if err := p.Flash(cmd.Context(), port); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "\n✗ Flash failed.")
 		return err
 	}

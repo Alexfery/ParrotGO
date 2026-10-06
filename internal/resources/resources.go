@@ -28,8 +28,8 @@ type Needs struct {
 	I2CController bool
 
 	// SPIHost is set by an SPI master bus, which takes one of the target's
-	// SPI hosts. Its future devices will not set it: they share the bus's
-	// host and GPIOs.
+	// SPI hosts. Its devices do not set it: they share the bus's host and
+	// GPIOs, and each one only claims the GPIO of its CS line.
 	SPIHost bool
 
 	// I2CAddress is set by an I2C device: the address it takes on its bus.
@@ -54,7 +54,22 @@ type I2CAddress struct {
 // Claim is the resource usage of one component.
 type Claim struct {
 	Component string
+
+	// Kind names the component's type in conflict messages, e.g. "SPI bus"
+	// gives `GPIO23 is already used by SPI bus "main_bus"`. When empty, the
+	// component is called a "component".
+	Kind string
+
 	Needs
+}
+
+// owner is how conflict messages name the component of c.
+func (c Claim) owner() string {
+	kind := c.Kind
+	if kind == "" {
+		kind = "component"
+	}
+	return fmt.Sprintf("%s %q", kind, c.Component)
 }
 
 // Allocation is the result of Allocate.
@@ -108,7 +123,8 @@ func Allocate(target targets.Target, claims []Claim) (Allocation, error) {
 	return a.alloc, nil
 }
 
-// allocator is the state of one Allocate call.
+// allocator is the state of one Allocate call. The owners are named as
+// conflict messages show them (see Claim.owner).
 type allocator struct {
 	target        targets.Target
 	gpioOwners    map[int]string
@@ -123,9 +139,9 @@ type allocator struct {
 func (a *allocator) take(c Claim) error {
 	for _, pin := range c.GPIOs {
 		if owner, used := a.gpioOwners[pin]; used {
-			return fmt.Errorf("GPIO%d is already used by component %q", pin, owner)
+			return fmt.Errorf("GPIO%d is already used by %s", pin, owner)
 		}
-		a.gpioOwners[pin] = c.Component
+		a.gpioOwners[pin] = c.owner()
 	}
 	if c.LEDC != nil {
 		assignment, err := a.ledc.assign(*c.LEDC)
@@ -149,15 +165,15 @@ func (a *allocator) take(c Claim) error {
 	}
 	if addr := c.I2CAddress; addr != nil {
 		if owner, used := a.addressOwners[*addr]; used {
-			return fmt.Errorf("I2C address 0x%02X is already used on bus %q by component %q", addr.Address, addr.Bus, owner)
+			return fmt.Errorf("I2C address 0x%02X is already used on bus %q by %s", addr.Address, addr.Bus, owner)
 		}
-		a.addressOwners[*addr] = c.Component
+		a.addressOwners[*addr] = c.owner()
 	}
 	if d := c.Drives; d != "" {
 		if owner, used := a.driverOwners[d]; used {
-			return fmt.Errorf("component %q is already driven by component %q", d, owner)
+			return fmt.Errorf("component %q is already driven by %s", d, owner)
 		}
-		a.driverOwners[d] = c.Component
+		a.driverOwners[d] = c.owner()
 	}
 	return nil
 }

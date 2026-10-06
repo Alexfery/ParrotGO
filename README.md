@@ -12,13 +12,15 @@ Parrot is a developer-friendly CLI for ESP32 and ESP-IDF projects, written in Go
 It aims to bring a modern framework-CLI experience (similar to Nest CLI) to
 embedded development. Its mascot is a parrot.
 
-> Status: `parrot new`, `parrot add led|button|adc|pwm|i2c|i2c-device|spi`, `parrot add sensor bme280`, `parrot build`, `parrot flash`, `parrot monitor`, `parrot doctor` and `parrot inspect` are implemented.
+> Status: `parrot new`, `parrot add led|button|adc|pwm|i2c|i2c-device|spi|spi-device`, `parrot add sensor bme280`, `parrot build`, `parrot flash`, `parrot monitor`, `parrot doctor` and `parrot inspect` are implemented.
 
 ## Usage
 
 ```bash
 go run . --help
 go run . new my-project
+go run . new my-project --target esp32-c3
+go run . new my-project --board esp32-c3-devkitm-1   # the board sets the target
 go run . add led status --pin 4     # run inside a Parrot project
 go run . add button user --pin 18
 go run . add adc light --pin 34
@@ -26,6 +28,7 @@ go run . add pwm fan --pin 18 --frequency 5000
 go run . add i2c sensors --sda 21 --scl 22   # I2C master bus
 go run . add spi main-bus --mosi 23 --miso 19 --sclk 18   # SPI master bus
 go run . add spi display-bus --mosi 23 --sclk 18          # write-only: no MISO
+go run . add spi-device display --bus main-bus --cs 5 --frequency 10000000 --mode 0
 go run . add i2c-device display --bus sensors --address 0x3C --frequency 400000
 go run . add i2c-device environment-device --bus sensors --address 0x76 --frequency 400000
 go run . add sensor bme280 environment --device environment-device
@@ -55,14 +58,23 @@ go build -o parrot .
 |-------------------------------|-------------------------------------------------------------------|
 | `main.go`                     | Entry point; starts the root command.                             |
 | `cmd/`                        | CLI commands: argument parsing, delegating to `internal/`.        |
+| `internal/core/`              | Platform interface and registry; opens a project with its platform. |
+| `internal/hardware/`          | Vendor, family, MCU and board models.                             |
+| `internal/platforms/esp32/`   | The ESP32 platform: its boards, ESP-IDF project creation and lifecycle. |
 | `internal/generator/`         | Template rendering engine for projects and components.            |
-| `internal/project/`           | ESP-IDF project layout, configuration, CMakeLists.txt.            |
+| `internal/project/`           | Project directory and `parrot.json`, whatever the platform.       |
+| `internal/targets/`           | ESP32 chips and their hardware (GPIOs, ADC, LEDC, I2C, SPI).      |
 | `internal/components/`        | Hardware component definitions (LED, button, ADC, PWM, I2C, ...). |
 | `internal/components/sensor/` | Sensor drivers, one package per sensor (`bme280/`).               |
 | `internal/espidf/`            | Integration with ESP-IDF tooling (`idf.py` build/flash/monitor).  |
 | `internal/doctor/`            | Read-only checks of the environment and the project.              |
 | `internal/inspect/`           | Turns `parrot.json` into component trees, and renders them.       |
 | `templates/`                  | Templates for generated files, embedded into the binary.          |
+
+The commands never call ESP-IDF themselves: `build`, `flash`, `monitor` and
+`new` go through the platform named in `parrot.json`, and ESP32 is the first
+platform. See [docs/architecture/platforms.md](docs/architecture/platforms.md)
+for the layers, the vendor/family/MCU/board model and how to add a platform.
 
 Generated projects are meant to stay compatible with standard ESP-IDF tooling
 (ESP-IDF v5.3 or newer: the components depend on `esp_driver_gpio`,
@@ -141,8 +153,8 @@ includes the bus header).
 ## SPI buses
 
 `parrot add spi <name> --mosi <gpio> [--miso <gpio>] --sclk <gpio>` adds an SPI
-master bus: the shared transport of the SPI devices a future
-`parrot add spi-device` will attach to.
+master bus: the shared transport of the SPI devices `parrot add spi-device`
+attaches to it.
 
 ```
 main_bus
@@ -183,8 +195,99 @@ The component exposes `<name>_init()` (`spi_bus_initialize`; returns
 and `<name>_get_host()`, the `spi_host_device_t` devices pass to
 `spi_bus_add_device()`. Errors are returned, never `ESP_ERROR_CHECK`ed. Its
 `CMakeLists.txt` uses `REQUIRES esp_driver_spi` (public), because its header
-exposes `spi_host_device_t`. There are no transactions on the bus: they will
+exposes `spi_host_device_t`. There are no transactions on the bus: they
 belong to the devices.
+
+### SPI devices
+
+`parrot add spi-device <name> --bus <bus> --cs <gpio> --frequency <hz> --mode <0-3>`
+adds a generic device to an existing SPI bus:
+
+```
+main_bus
+└── SPI Bus
+    ├── Host: SPI2_HOST
+    ├── MOSI: GPIO23
+    ├── MISO: GPIO19
+    ├── SCLK: GPIO18
+    └── Devices
+        ├── display (SPI Device)
+        │   ├── CS: GPIO5
+        │   ├── Frequency: 10000000 Hz
+        │   └── Mode: 0 (CPOL 0, CPHA 0)
+        └── sensor (SPI Device)
+            ├── CS: GPIO17
+            ├── Frequency: 1000000 Hz
+            └── Mode: 3 (CPOL 1, CPHA 1)
+```
+
+```bash
+parrot add spi main-bus --mosi 23 --miso 19 --sclk 18
+parrot add spi-device display --bus main-bus --cs 5 --frequency 10000000 --mode 0
+parrot add spi-device sensor --bus main-bus --cs 17 --frequency 1000000 --mode 3
+```
+
+- **The device owns its CS GPIO only.** MOSI, MISO, SCLK and the host belong
+  to the bus and are shared by all its devices, so they are not copied into
+  the device's entry: `{"bus": "main_bus", "cs": 5, "frequency": 10000000,
+  "mode": 0}`. `--bus` must name an existing `spi-bus` component (looked up in
+  `parrot.json`, never in `components/`).
+- **CS** must exist on the target, be an output GPIO (the master drives it,
+  and `spi_bus_add_device` rejects anything else) and not be a flash pin. A
+  GPIO already used by another component is rejected by the resource
+  allocator, which names the owner: `GPIO23 is already used by SPI bus
+  "main_bus"` for one of the bus's lines, `GPIO5 is already used by SPI device
+  "display"` for another device's CS.
+- **Frequency and mode belong to the device**, as ESP-IDF sets them per
+  device (`spi_device_interface_config_t`): devices on one bus can differ.
+  The frequency must be positive and fit in the C `int` of `clock_speed_hz`;
+  ESP-IDF rejects one above the SPI clock source, and the device's driver
+  knows what the chip accepts. The mode is 0-3: mode 0 is (CPOL 0, CPHA 0),
+  1 is (0, 1), 2 is (1, 0), 3 is (1, 1). CPOL is the idle level of SCLK, CPHA
+  whether data is sampled on the first or the second edge.
+- **Queue size 1:** Parrot's transactions are synchronous
+  (`spi_device_transmit`), so no more than one is ever queued. There is no
+  `--queue-size`.
+- **Not generated:** queued or asynchronous transactions, callbacks, bus
+  locking (`spi_device_acquire_bus`) and command/address/dummy phases. They
+  depend on the device's protocol and belong to its driver.
+
+The component exposes:
+
+```c
+esp_err_t display_init(void);    // spi_bus_add_device(main_bus_get_host(), ...)
+esp_err_t display_deinit(void);  // spi_bus_remove_device: the bus stays
+spi_device_handle_t display_get_handle(void);
+esp_err_t display_transmit(const void *data, size_t length);
+esp_err_t display_transfer(const void *tx_data, void *rx_data, size_t length);
+```
+
+Lengths are in **bytes**; ESP-IDF counts bits (`spi_transaction_t.length`), so
+the component converts them, and returns `ESP_ERR_INVALID_SIZE` if `length * 8`
+would overflow. `display_transfer()` is full duplex: it sends `tx_data` on MOSI
+while it receives into `rx_data` from MISO. With `tx_data` NULL nothing is sent
+(receive only); with `rx_data` NULL nothing is kept (that is
+`display_transmit()`); both NULL is `ESP_ERR_INVALID_ARG`. A length of 0 does
+nothing and returns `ESP_OK`. On a bus without MISO, `rx_data` gives
+`ESP_ERR_NOT_SUPPORTED`. With DMA, ESP-IDF may write `rx_data` in 4-byte units,
+so give it room for `length` rounded up to a multiple of 4.
+
+Lifecycle stays explicit and bottom up. `display_init()` never initializes the
+bus: when the bus is not initialized, `spi_bus_add_device` returns
+`ESP_ERR_INVALID_STATE`, which is passed on.
+
+```c
+ESP_ERROR_CHECK(main_bus_init());
+ESP_ERROR_CHECK(display_init());
+// transactions...
+ESP_ERROR_CHECK(display_deinit());
+ESP_ERROR_CHECK(main_bus_deinit()); // fails while devices are attached
+```
+
+In CMake the device has `REQUIRES esp_driver_spi` (its header exposes
+`spi_device_handle_t`) and `PRIV_REQUIRES <bus>` (only its `.c` includes the
+bus header). The bus cannot be called `main`: that is the name of the ESP-IDF
+project's own component.
 
 ## Sensors
 
@@ -367,8 +470,9 @@ sensors
                 └── environment (BME280)
 ```
 
-- **Hierarchy:** an I2C device is listed under its bus and a sensor under its
-  device, whatever their order in `parrot.json`. Other components are listed at
+- **Hierarchy:** an I2C or SPI device is listed under its bus and a sensor
+  under its device, whatever their order in `parrot.json`, and nowhere else.
+  Other components are listed at
   the top level, in manifest order, so the output is always the same.
 - **Derived information:** the ADC unit and channel of a GPIO come from the
   target registry; the LEDC timer and channel of a PWM output and the host of
@@ -390,14 +494,16 @@ it reads the same in a terminal, a file or a CI log.
 
 ## parrot.json
 
-`parrot.json` records the user's intent: the target and the components with
-their settings. Hardware details that Parrot can derive (ADC unit/channel,
-LEDC timer/channel, SPI host) are not stored; they are recomputed from the
-target and the component order. The I2C controller of a bus is not stored either: ESP-IDF
-picks it at run time.
+`parrot.json` records the user's intent: the platform, the target (the MCU),
+optionally the board, and the components with their settings. Hardware
+details that Parrot can derive (ADC unit/channel, LEDC timer/channel, SPI
+host) are not stored; they are recomputed from the target and the component
+order. The I2C controller of a bus is not stored either: ESP-IDF picks it at
+run time.
 
 ```json
 {
+  "platform": "esp32",
   "target": "esp32",
   "components": [
     { "type": "led", "name": "status", "config": { "pin": 4 } },
@@ -405,6 +511,12 @@ picks it at run time.
   ]
 }
 ```
+
+With `parrot new --board <board>`, the board is recorded as well
+(`"board": "esp32-c3-devkitm-1"`) and its MCU becomes the target; a target
+that does not match the board is rejected. Manifests without `"platform"`
+(written before Parrot had platforms) are ESP32 projects, and are not
+rewritten to add it.
 
 Older manifests with a top-level `"pin"` per component are still read and are
 rewritten in this format on the next `parrot add`.

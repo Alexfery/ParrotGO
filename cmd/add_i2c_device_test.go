@@ -94,6 +94,7 @@ func TestAddI2CDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{
+  "platform": "esp32",
   "target": "esp32",
   "components": [
     {

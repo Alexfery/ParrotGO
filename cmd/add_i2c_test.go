@@ -73,6 +73,7 @@ func TestAddI2C(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{
+  "platform": "esp32",
   "target": "esp32",
   "components": [
     {

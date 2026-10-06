@@ -1,7 +1,8 @@
-// Package targets is the single source of truth for the SoCs Parrot supports
-// and the hardware they provide. It describes the chip itself (the ESP-IDF
-// target), not a development board: a GPIO listed here may not be routed to a
-// header on a given board.
+// Package targets is the single source of truth for the SoCs of the ESP32
+// platform (internal/platforms/esp32) and the hardware they provide. It
+// describes the chip itself (the ESP-IDF target, an MCU in the terms of
+// internal/hardware), not a development board: a GPIO listed here may not be
+// routed to a header on a given board.
 //
 // This package only describes hardware. Deciding whether a pin fits a
 // component (LED, button, ...) belongs to internal/components.

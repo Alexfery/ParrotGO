@@ -168,6 +168,16 @@ func TestIDFCommandErrors(t *testing.T) {
 			}
 			notRun(t, record)
 		})
+		t.Run(command+"/unknown platform", func(t *testing.T) {
+			newProject(t, "esp32")
+			record := installFakeIDF(t)
+			os.WriteFile("parrot.json", []byte(`{"platform": "stm32", "target": "stm32f401re"}`), 0o644)
+			err := run(t, command)
+			if err == nil || !strings.HasPrefix(err.Error(), `unsupported platform "stm32"`) {
+				t.Errorf("error = %v", err)
+			}
+			notRun(t, record)
+		})
 		t.Run(command+"/invalid target", func(t *testing.T) {
 			newProject(t, "esp32")
 			record := installFakeIDF(t)

@@ -367,3 +367,37 @@ func TestSPIBusGPIOConflicts(t *testing.T) {
 		}
 	}
 }
+
+// A claim with a kind is named by it in conflicts: a CS line on a GPIO of its
+// bus, or of another device, says which one it is.
+func TestConflictsNameKinds(t *testing.T) {
+	esp32 := mustTarget(t, "esp32")
+	bus := spiBus("main_bus", 23, 19, 18)
+	bus.Kind = "SPI bus"
+	device := func(name string, cs int) resources.Claim {
+		return resources.Claim{Component: name, Kind: "SPI device", Needs: resources.Needs{GPIOs: []int{cs}}}
+	}
+	tests := []struct {
+		claims  []resources.Claim
+		wantErr string
+	}{
+		{[]resources.Claim{bus, device("display", 23)}, `GPIO23 is already used by SPI bus "main_bus"`},
+		{[]resources.Claim{bus, device("display", 18)}, `GPIO18 is already used by SPI bus "main_bus"`},
+		{[]resources.Claim{bus, device("display", 5), device("sensor", 5)}, `GPIO5 is already used by SPI device "display"`},
+		{[]resources.Claim{gpio("status", 5), device("display", 5)}, `GPIO5 is already used by component "status"`},
+	}
+	for _, tt := range tests {
+		_, err := resources.Allocate(esp32, tt.claims)
+		if err == nil || err.Error() != tt.wantErr {
+			t.Errorf("error = %v, want %q", err, tt.wantErr)
+		}
+	}
+	// Devices on one bus share its lines: only their CS lines are theirs.
+	alloc, err := resources.Allocate(esp32, []resources.Claim{bus, device("display", 5), device("sensor", 17)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alloc.SPIHosts) != 1 || alloc.SPIHosts["main_bus"].Symbol != "SPI2_HOST" {
+		t.Errorf("SPI hosts = %v, want SPI2_HOST for the bus only", alloc.SPIHosts)
+	}
+}

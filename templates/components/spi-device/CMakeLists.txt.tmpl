@@ -1,0 +1,8 @@
+idf_component_register(
+    SRCS "{{.Name}}.c"
+    INCLUDE_DIRS "include"
+    # Public: {{.Name}}.h exposes spi_device_handle_t from driver/spi_master.h.
+    REQUIRES esp_driver_spi
+    # Private: only {{.Name}}.c uses the bus, through {{.Bus}}.h, for its host.
+    PRIV_REQUIRES {{.Bus}}
+)

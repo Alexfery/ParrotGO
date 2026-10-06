@@ -1,16 +1,18 @@
 // Package spi is the SPI master bus component: the MOSI, MISO and SCLK lines
-// and one of the target's SPI hosts, which SPI devices will share.
+// and one of the target's SPI hosts, which the SPI devices on the bus share
+// (see internal/components/spidevice).
 //
-// The bus owns its GPIOs and its host. The devices that will attach to it own
-// neither: each one will have its own CS line, clock frequency and SPI mode,
-// which ESP-IDF sets per device (spi_device_interface_config_t), so the bus
-// has none of them.
+// The bus owns its GPIOs and its host. The devices attached to it own
+// neither: each one has its own CS line, clock frequency and SPI mode, which
+// ESP-IDF sets per device (spi_device_interface_config_t), so the bus has
+// none of them.
 package spi
 
 import (
 	"fmt"
 
 	"parrot/internal/components"
+	"parrot/internal/project"
 	"parrot/internal/resources"
 	"parrot/internal/targets"
 )
@@ -93,4 +95,23 @@ func New(name string, mosi int, miso *int, sclk int) (Bus, error) {
 		return Bus{}, err
 	}
 	return Bus{Name: normalized, Config: c}, nil
+}
+
+// Lookup returns the SPI bus called name in cfg, for a component that refers
+// to it. It fails if cfg has no component of that name, or if that component
+// is not an SPI bus. parrot.json is the only source: the component's files
+// are not read.
+func Lookup(cfg project.Config, name string) (Bus, error) {
+	c, found := cfg.Component(name)
+	if !found {
+		return Bus{}, fmt.Errorf("SPI bus %q does not exist", name)
+	}
+	if c.Type != Type {
+		return Bus{}, fmt.Errorf("component %q is not a SPI bus", name)
+	}
+	var config Config
+	if err := c.Decode(&config); err != nil {
+		return Bus{}, err
+	}
+	return Bus{Name: c.Name, Config: config}, nil
 }

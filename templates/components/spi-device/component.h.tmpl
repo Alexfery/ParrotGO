@@ -1,0 +1,63 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "driver/spi_master.h"
+#include "esp_err.h"
+
+// SPI device on the "{{.Bus}}" bus: CS GPIO{{.CS}}, SCLK at {{.Frequency}} Hz, SPI mode {{.Mode}}
+// (CPOL {{.CPOL}}, CPHA {{.CPHA}}).
+//
+// Generic transport: these functions move bytes, in full duplex. What the
+// bytes mean (commands, registers, dummy bytes to clock a reply out) is up to
+// the driver of the actual device, which can build on them or on
+// {{.Name}}_get_handle().
+//
+// Lifecycle: {{.Bus}}_init() creates the bus, {{.Name}}_init() adds this device to
+// it. {{.Name}}_deinit() removes this device only: the bus stays, for its other
+// devices. Remove every device before {{.Bus}}_deinit().
+//
+// Transactions are synchronous: each function returns once the transaction
+// is done. Like spi_device_transmit, they are not thread safe for one device:
+// use it from one task at a time.
+{{- if not .BusHasMISO}}
+//
+// The bus has no MISO line, so this device can only send.
+{{- end}}
+
+// Adds the device to the bus. Returns ESP_ERR_INVALID_STATE if the device was
+// already added, otherwise the error of spi_bus_add_device: among others
+// ESP_ERR_INVALID_STATE if the bus does not exist yet (call {{.Bus}}_init()
+// first) and ESP_ERR_NOT_FOUND if the bus has no CS slot left.
+esp_err_t {{.Name}}_init(void);
+
+// Removes the device from the bus, which stays. Returns ESP_ERR_INVALID_STATE
+// before {{.Name}}_init, otherwise the error of spi_bus_remove_device.
+esp_err_t {{.Name}}_deinit(void);
+
+// Returns the device handle, for drivers built on this device, or NULL until
+// {{.Name}}_init succeeds.
+spi_device_handle_t {{.Name}}_get_handle(void);
+
+// Lengths are in bytes; ESP-IDF counts bits, and the conversion is done here.
+// A length of 0 transfers nothing: no transaction, and ESP_OK.
+//
+// Both functions return ESP_ERR_INVALID_STATE before {{.Name}}_init,
+// ESP_ERR_INVALID_ARG when there is nothing to send or receive into (NULL
+// buffers with a non-zero length), ESP_ERR_INVALID_SIZE when length * 8 does
+// not fit in a size_t, otherwise the error of spi_device_transmit, e.g.
+// ESP_ERR_INVALID_ARG for more than the bus's maximum transfer size.
+
+// Sends length bytes from data, ignoring what the device sends back.
+esp_err_t {{.Name}}_transmit(const void *data, size_t length);
+
+// Sends length bytes from tx_data and, at the same time, receives length bytes
+// into rx_data (full duplex). Either buffer may be NULL, not both: without
+// tx_data nothing is sent (no MOSI phase), without rx_data nothing is kept.
+// rx_data may be written in 4-byte units, as the bus uses DMA: give it room
+// for length rounded up to a multiple of 4.
+{{- if not .BusHasMISO}}
+// The bus has no MISO line: returns ESP_ERR_NOT_SUPPORTED if rx_data is set.
+{{- end}}
+esp_err_t {{.Name}}_transfer(const void *tx_data, void *rx_data, size_t length);

@@ -1,0 +1,95 @@
+#include <stddef.h>
+#include <stdint.h>
+
+#include "driver/spi_master.h"
+#include "esp_err.h"
+#include "{{.Bus}}.h"
+#include "{{.Name}}.h"
+
+// CS on {{.Target}}, checked by Parrot: an output GPIO that no other component
+// uses. The driver routes it through the GPIO matrix.
+#define {{.Macro}}_CS_GPIO {{.CS}}
+#define {{.Macro}}_FREQUENCY_HZ {{.Frequency}}
+// SPI mode {{.Mode}}: CPOL {{.CPOL}} (SCLK idles {{if eq .CPOL 0}}low{{else}}high{{end}}), CPHA {{.CPHA}} (data sampled on the {{if eq .CPHA 0}}first{{else}}second{{end}} edge).
+#define {{.Macro}}_MODE {{.Mode}}
+// Transactions are synchronous (spi_device_transmit): one at a time is in
+// the queue, so a queue of 1 is enough.
+#define {{.Macro}}_QUEUE_SIZE 1
+
+static spi_device_handle_t {{.Name}}_handle = NULL;
+
+esp_err_t {{.Name}}_init(void)
+{
+    if ({{.Name}}_handle != NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    spi_device_interface_config_t config = {
+        .clock_speed_hz = {{.Macro}}_FREQUENCY_HZ,
+        .mode = {{.Macro}}_MODE,
+        .spics_io_num = {{.Macro}}_CS_GPIO,
+        .queue_size = {{.Macro}}_QUEUE_SIZE,
+        // No command, address or dummy phases: they depend on the device's
+        // protocol, so its driver builds them into the data.
+    };
+    // The bus belongs to {{.Bus}}: this device is added to it, never creates it.
+    // If {{.Bus}}_init() was not called, ESP-IDF returns ESP_ERR_INVALID_STATE.
+    spi_device_handle_t handle;
+    esp_err_t err = spi_bus_add_device({{.Bus}}_get_host(), &config, &handle);
+    if (err == ESP_OK) {
+        {{.Name}}_handle = handle;
+    }
+    return err;
+}
+
+esp_err_t {{.Name}}_deinit(void)
+{
+    if ({{.Name}}_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    // Removes this device only; {{.Bus}}_deinit() frees the bus.
+    esp_err_t err = spi_bus_remove_device({{.Name}}_handle);
+    if (err == ESP_OK) {
+        {{.Name}}_handle = NULL;
+    }
+    return err;
+}
+
+spi_device_handle_t {{.Name}}_get_handle(void)
+{
+    return {{.Name}}_handle;
+}
+
+esp_err_t {{.Name}}_transmit(const void *data, size_t length)
+{
+    return {{.Name}}_transfer(data, NULL, length);
+}
+
+esp_err_t {{.Name}}_transfer(const void *tx_data, void *rx_data, size_t length)
+{
+    if ({{.Name}}_handle == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (length == 0) {
+        return ESP_OK; // nothing to transfer: CS is not even asserted
+    }
+    if (tx_data == NULL && rx_data == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+{{- if not .BusHasMISO}}
+    if (rx_data != NULL) {
+        return ESP_ERR_NOT_SUPPORTED; // {{.Bus}} has no MISO line
+    }
+{{- end}}
+    // spi_transaction_t counts bits: length * 8 must not overflow.
+    if (length > SIZE_MAX / 8) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    spi_transaction_t transaction = {
+        .length = length * 8,
+        // 0: in full duplex, ESP-IDF receives as many bits as it sends.
+        .rxlength = 0,
+        .tx_buffer = tx_data, // NULL: no MOSI phase
+        .rx_buffer = rx_data, // NULL: no MISO phase
+    };
+    return spi_device_transmit({{.Name}}_handle, &transaction);
+}

@@ -163,3 +163,35 @@ func TestClaimsSPIBus(t *testing.T) {
 		t.Errorf("Claims with a CS on the bus: error = %v", err)
 	}
 }
+
+// An SPI device claims its CS GPIO only, and its conflicts name it, and its
+// bus, by type.
+func TestClaimsSPIDevice(t *testing.T) {
+	esp32, _ := targets.Get("esp32")
+	cfg := project.Config{Target: "esp32", Components: []project.ComponentConfig{
+		entry(t, "spi-bus", "main_bus", `{"mosi": 23, "miso": 19, "sclk": 18}`),
+		entry(t, "spi-device", "display", `{"bus": "main_bus", "cs": 5, "frequency": 10000000, "mode": 0}`),
+		entry(t, "led", "status", `{"pin": 4}`),
+	}}
+	claims, err := catalog.Claims(cfg, esp32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := claims[1]; !slices.Equal(c.GPIOs, []int{5}) || c.SPIHost || c.LEDC != nil {
+		t.Errorf("display claim = %+v, want GPIO5 only", c)
+	}
+	for i, want := range []string{"SPI bus", "SPI device", ""} {
+		if claims[i].Kind != want {
+			t.Errorf("%s claim kind = %q, want %q", claims[i].Component, claims[i].Kind, want)
+		}
+	}
+
+	cfg.Components[1] = entry(t, "spi-device", "display", `{"bus": "main_bus", "cs": 5, "frequency": 10000000, "mode": 4}`)
+	if _, err := catalog.Claims(cfg, esp32); err == nil || err.Error() != "SPI mode must be between 0 and 3" {
+		t.Errorf("Claims with mode 4: error = %v", err)
+	}
+	cfg.Components[1] = entry(t, "spi-device", "display", `{"bus": "main_bus", "cs": 5, "frequency": 10000000, "mode": 0, "mosi": 23}`)
+	if _, err := catalog.Claims(cfg, esp32); err == nil || !strings.HasPrefix(err.Error(), `invalid config for component "display"`) {
+		t.Errorf("Claims with a MOSI on the device: error = %v", err)
+	}
+}

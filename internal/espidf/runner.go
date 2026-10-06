@@ -1,6 +1,9 @@
-// Package espidf isolates every interaction with the ESP-IDF toolchain.
-// Parrot drives ESP-IDF through idf.py only; it never calls CMake, Ninja or
-// the compilers directly, and it never installs anything.
+// Package espidf isolates every interaction with the ESP-IDF toolchain: it
+// is the SDK layer of the ESP32 platform (internal/platforms/esp32): build,
+// flash and monitor reach it only through that platform, and parrot doctor
+// uses it to check the environment. Parrot drives ESP-IDF
+// through idf.py only; it never calls CMake, Ninja or the compilers directly,
+// and it never installs anything.
 package espidf
 
 import (
