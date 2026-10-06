@@ -109,7 +109,8 @@ Peripherals are not abstracted on purpose. These packages describe or drive
 ESP32 and ESP-IDF only, and are used by the ESP32 platform or by commands that
 exist only for ESP32 today:
 
-- `internal/targets`: the ESP32 chips (GPIOs, ADC, LEDC, I2C, SPI hosts).
+- `internal/targets`: the ESP32 chips (GPIOs, ADC, LEDC, I2C, SPI hosts,
+  general purpose timers).
 - `internal/espidf`: the ESP-IDF tooling (the SDK layer of the ESP32
   platform). `parrot doctor` uses it as well.
 - `internal/components`, `internal/resources`, `templates/`: ESP-IDF code

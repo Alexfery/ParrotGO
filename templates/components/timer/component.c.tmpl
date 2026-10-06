@@ -1,0 +1,63 @@
+#include <stdbool.h>
+#include <stddef.h>
+
+#include "driver/gptimer.h"
+#include "esp_attr.h"
+#include "esp_err.h"
+#include "{{.Name}}.h"
+
+// One tick per microsecond. The alarm fires every {{.Period}}, when the count
+// reaches {{.Macro}}_ALARM_COUNT; the hardware then reloads the count to 0, so
+// the alarms stay one period apart whatever the callback does.
+#define {{.Macro}}_RESOLUTION_HZ {{.ResolutionHz}}
+#define {{.Macro}}_ALARM_COUNT   {{.AlarmCount}}ULL
+
+// Created and owned by {{.Name}}_init; NULL until then.
+static gptimer_handle_t {{.Name}}_timer = NULL;
+
+// Called at every alarm, in ISR context: keep it short, and never block,
+// wait, allocate memory or log here. Return true only if it woke a higher
+// priority task (e.g. with xQueueSendFromISR), so that FreeRTOS switches to
+// that task when the interrupt ends. IRAM_ATTR keeps it in internal RAM, like
+// the driver's interrupt handler.
+static bool IRAM_ATTR {{.Name}}_on_alarm(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_ctx)
+{
+    // Add ISR-safe timer handling here.
+    return false;
+}
+
+void {{.Name}}_init(void)
+{
+    gptimer_config_t timer_config = {
+        .clk_src = GPTIMER_CLK_SRC_DEFAULT,
+        .direction = GPTIMER_COUNT_UP,
+        .resolution_hz = {{.Macro}}_RESOLUTION_HZ,
+    };
+    // ESP-IDF takes any free general purpose timer; Parrot checks that the
+    // project's timers fit on the target.
+    ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &{{.Name}}_timer));
+
+    gptimer_alarm_config_t alarm_config = {
+        .alarm_count = {{.Macro}}_ALARM_COUNT,
+        .reload_count = 0,
+        .flags.auto_reload_on_alarm = true,
+    };
+    ESP_ERROR_CHECK(gptimer_set_alarm_action({{.Name}}_timer, &alarm_config));
+
+    gptimer_event_callbacks_t callbacks = {
+        .on_alarm = {{.Name}}_on_alarm,
+    };
+    ESP_ERROR_CHECK(gptimer_register_event_callbacks({{.Name}}_timer, &callbacks, NULL));
+
+    ESP_ERROR_CHECK(gptimer_enable({{.Name}}_timer));
+}
+
+void {{.Name}}_start(void)
+{
+    ESP_ERROR_CHECK(gptimer_start({{.Name}}_timer));
+}
+
+void {{.Name}}_stop(void)
+{
+    ESP_ERROR_CHECK(gptimer_stop({{.Name}}_timer));
+}

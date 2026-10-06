@@ -15,6 +15,7 @@ import (
 	"parrot/internal/components/sensor/bme280"
 	"parrot/internal/components/spi"
 	"parrot/internal/components/spidevice"
+	"parrot/internal/components/timer"
 	"parrot/internal/project"
 	"parrot/internal/resources"
 	"parrot/internal/targets"
@@ -73,6 +74,8 @@ func needs(c project.ComponentConfig, target targets.Target) (resources.Needs, e
 		return decodeNeeds[spi.Config](c, target)
 	case spidevice.Type:
 		return decodeNeeds[spidevice.Config](c, target)
+	case timer.Type:
+		return decodeNeeds[timer.Config](c, target)
 	}
 	return resources.Needs{}, fmt.Errorf("component %q in %s has unknown type %q", c.Name, project.ConfigFile, c.Type)
 }

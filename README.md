@@ -14,7 +14,7 @@ embedded development. Its mascot is a parrot.
 
 Presentation page: <https://parrotgodocs.vercel.app/>
 
-> Status: `parrot new`, `parrot add led|button|adc|pwm|i2c|i2c-device|spi|spi-device`, `parrot add sensor bme280`, `parrot build`, `parrot flash`, `parrot monitor`, `parrot doctor` and `parrot inspect` are implemented.
+> Status: `parrot new`, `parrot add led|button|adc|pwm|timer|i2c|i2c-device|spi|spi-device`, `parrot add sensor bme280`, `parrot build`, `parrot flash`, `parrot monitor`, `parrot doctor` and `parrot inspect` are implemented.
 
 ## Usage
 
@@ -27,6 +27,7 @@ go run . add led status --pin 4     # run inside a Parrot project
 go run . add button user --pin 18
 go run . add adc light --pin 34
 go run . add pwm fan --pin 18 --frequency 5000
+go run . add timer heartbeat --period 1s   # periodic GPTimer alarm
 go run . add i2c sensors --sda 21 --scl 22   # I2C master bus
 go run . add spi main-bus --mosi 23 --miso 19 --sclk 18   # SPI master bus
 go run . add spi display-bus --mosi 23 --sclk 18          # write-only: no MISO
@@ -65,8 +66,8 @@ go build -o parrot .
 | `internal/platforms/esp32/`   | The ESP32 platform: its boards, ESP-IDF project creation and lifecycle. |
 | `internal/generator/`         | Template rendering engine for projects and components.            |
 | `internal/project/`           | Project directory and `parrot.json`, whatever the platform.       |
-| `internal/targets/`           | ESP32 chips and their hardware (GPIOs, ADC, LEDC, I2C, SPI).      |
-| `internal/components/`        | Hardware component definitions (LED, button, ADC, PWM, I2C, ...). |
+| `internal/targets/`           | ESP32 chips and their hardware (GPIOs, ADC, LEDC, I2C, SPI, GPTimer). |
+| `internal/components/`        | Hardware component definitions (LED, button, ADC, PWM, timer, I2C, ...). |
 | `internal/components/sensor/` | Sensor drivers, one package per sensor (`bme280/`).               |
 | `internal/espidf/`            | Integration with ESP-IDF tooling (`idf.py` build/flash/monitor).  |
 | `internal/doctor/`            | Read-only checks of the environment and the project.              |
@@ -80,7 +81,8 @@ for the layers, the vendor/family/MCU/board model and how to add a platform.
 
 Generated projects are meant to stay compatible with standard ESP-IDF tooling
 (ESP-IDF v5.3 or newer: the components depend on `esp_driver_gpio`,
-`esp_driver_ledc`, `esp_adc`, `esp_driver_i2c` and `esp_driver_spi`).
+`esp_driver_ledc`, `esp_adc`, `esp_driver_gptimer`, `esp_driver_i2c` and
+`esp_driver_spi`).
 
 Component names are normalized (lowercase, `-` becomes `_`) and must not be
 `main`: ESP-IDF adds `components/` after the project's `main` folder, and a
@@ -291,6 +293,58 @@ In CMake the device has `REQUIRES esp_driver_spi` (its header exposes
 bus header). The bus cannot be called `main`: that is the name of the ESP-IDF
 project's own component.
 
+## Timers
+
+`parrot add timer <name> --period <duration>` adds a periodic hardware timer
+built on ESP-IDF's GPTimer driver (`driver/gptimer.h`; the legacy timer API is
+never used):
+
+```bash
+parrot add timer heartbeat --period 1s
+parrot add timer sensor_tick --period 50ms
+parrot add timer fast_tick --period 500us
+```
+
+- **Period:** a duration with its unit, `us`, `ms` or `s` (Go's duration
+  syntax, so `µs`, `m` and `h` work too). It must be positive and a whole
+  number of microseconds: `0ms`, `-10ms`, `abc`, `1000` (no unit) and
+  `1500ns` are rejected, never rounded. It is stored in microseconds,
+  `{"mode": "periodic", "period_us": 1000000}`, which is exactly the alarm
+  count of the generated code.
+- **Fixed configuration:** the timer counts up at 1 MHz (one tick per
+  microsecond) from the default clock source, the alarm fires when the count
+  reaches the period, and the hardware reloads the count to 0
+  (`auto_reload_on_alarm`), so alarms stay one period apart. One-shot mode,
+  the clock source and changing the period at run time are not supported.
+- **Resources:** a timer uses no GPIO. It takes one of the target's general
+  purpose timers: 4 on ESP32 and ESP32-S3, 2 on ESP32-C3 and ESP32-C6. As for
+  I2C controllers, ESP-IDF picks which one (`gptimer_new_timer`), so Parrot
+  only counts them and rejects a timer too many (`no general purpose timers
+  available on ESP32`).
+- **Short periods:** every alarm is an interrupt, so periods of a few
+  microseconds leave little CPU time to the rest of the application. Parrot
+  accepts anything from 1 us, as ESP-IDF does.
+
+The component exposes:
+
+```c
+void heartbeat_init(void);   // gptimer_new_timer, set_alarm_action, register_event_callbacks, enable
+void heartbeat_start(void);  // gptimer_start
+void heartbeat_stop(void);   // gptimer_stop: the count is kept, start resumes the period
+```
+
+Like the PWM component, errors are `ESP_ERROR_CHECK`ed: `heartbeat_init()`
+aborts when no general purpose timer is free, and start or stop in the wrong
+state abort too. The timer handle is static in `heartbeat.c`, created by
+`heartbeat_init()`, which should be called once.
+
+`heartbeat.c` also has `heartbeat_on_alarm()`, the alarm callback. It runs in
+ISR context (from IRAM): add your ISR-safe handling where it is marked, and
+never block, wait, allocate memory or log there. It returns `true` only when it
+woke a higher priority task. Parrot generates no FreeRTOS queue or task for
+it. In CMake the component has `PRIV_REQUIRES esp_driver_gptimer`: its header
+exposes no GPTimer type.
+
 ## Sensors
 
 `parrot add sensor <type> <name> --device <i2c-device>` adds a sensor driver
@@ -479,8 +533,8 @@ sensors
 - **Derived information:** the ADC unit and channel of a GPIO come from the
   target registry; the LEDC timer and channel of a PWM output and the host of
   an SPI bus come from the same allocator code generation uses, so inspect
-  shows what the generated code contains. The I2C controller of a bus is not
-  shown: ESP-IDF picks it.
+  shows what the generated code contains. The I2C controller of a bus and the
+  general purpose timer of a timer are not shown: ESP-IDF picks them.
 - **Integrity:** a missing dependency, a dependency of the wrong type, a
   duplicate name, an invalid config, a resource conflict or an unsupported
   target is shown as `ERROR:` on the component and makes the command exit with
@@ -500,8 +554,8 @@ it reads the same in a terminal, a file or a CI log.
 optionally the board, and the components with their settings. Hardware
 details that Parrot can derive (ADC unit/channel, LEDC timer/channel, SPI
 host) are not stored; they are recomputed from the target and the component
-order. The I2C controller of a bus is not stored either: ESP-IDF picks it at
-run time.
+order. The I2C controller of a bus and the general purpose timer of a timer
+are not stored either: ESP-IDF picks them at run time.
 
 ```json
 {

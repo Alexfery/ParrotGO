@@ -6,6 +6,7 @@ package targets
 // ESP-IDF soc/esp32/include/soc/soc_caps.h (LEDC, SOC_HP_I2C_NUM, SOC_SPI_PERIPH_NUM) and clk_tree_defs.h (LEDC);
 // ESP-IDF esp_driver_spi/include/driver/spi_common.h (spi_bus_initialize:
 // "SPI0/1 is not supported") and hal/spi_types.h (spi_host_device_t);
+// ESP-IDF esp_hal_timg/esp32/include/hal/timg_ll.h and timer_ll.h (GPTimer);
 // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/spi_master.html
 // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/gpio.html
 //
@@ -28,6 +29,8 @@ var esp32 = Target{
 	// (CONFIG_SPIRAM_OCCUPY_SPI_HOST), and spi_bus_initialize then reports it
 	// as in use.
 	SPI: SPI{Hosts: []SPIHost{spi2, spi3}},
+	// Two groups of two. esp_timer uses the groups' separate LAC timer, not these.
+	GPTimer: GPTimer{Timers: 4, CounterBits: 64},
 	pins: pinMap(
 		withPins(ioPin, 1, 3, 5, 16, 17, 18, 19, 21, 22, 23),
 		withPins(flashPin, span(6, 11)...),

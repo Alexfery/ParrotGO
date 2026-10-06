@@ -618,3 +618,43 @@ func TestResolveSPIDeviceProblems(t *testing.T) {
 		}
 	}
 }
+
+// A timer shows its mode and period. Its general purpose timer is not shown:
+// ESP-IDF picks it when the timer is created.
+func TestResolveTimer(t *testing.T) {
+	checkComponent(t, only(t, resolve("esp32", component("timer", "heartbeat", `{"mode": "periodic", "period_us": 1000000}`))), inspect.Component{
+		Name: "heartbeat", Type: "timer", Label: "Timer",
+		Properties: []inspect.Property{setting("Mode", "periodic"), setting("Period", "1s")},
+	})
+}
+
+// The timers' problems are the ones `parrot add timer` reports: its own
+// checks, and a timer too many for the target.
+func TestResolveTimerProblems(t *testing.T) {
+	timer := func(name string, periodUS uint64) project.ComponentConfig {
+		return component("timer", name, fmt.Sprintf(`{"mode": "periodic", "period_us": %d}`, periodUS))
+	}
+	tests := []struct {
+		name       string
+		target     string
+		components []project.ComponentConfig
+		wantIssue  string // on the last component
+	}{
+		{"zero period", "esp32", []project.ComponentConfig{timer("tick", 0)},
+			"period must be positive"},
+		{"unsupported mode", "esp32", []project.ComponentConfig{component("timer", "tick", `{"mode": "one-shot", "period_us": 1000}`)},
+			`unsupported timer mode "one-shot": Parrot only generates "periodic" timers`},
+		{"period beyond the counter", "esp32-c3", []project.ComponentConfig{timer("tick", 1<<54)},
+			"period of 18014398509481984 us does not fit in the 54-bit counter of the timers of ESP32-C3"},
+		{"no timer left", "esp32-c3", []project.ComponentConfig{timer("a", 1000), timer("b", 2000), timer("c", 500)},
+			"no general purpose timers available on ESP32-C3"},
+	}
+	for _, tt := range tests {
+		in := resolve(tt.target, tt.components...)
+		last := in.Components[len(in.Components)-1]
+		if want := []inspect.Issue{errorIssue(tt.wantIssue)}; !reflect.DeepEqual(last.Issues, want) {
+			t.Errorf("%s: issues = %+v, want %+v", tt.name, last.Issues, want)
+		}
+		checkCounts(t, in, 1, 0)
+	}
+}

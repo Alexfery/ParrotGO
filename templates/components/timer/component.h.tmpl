@@ -1,0 +1,18 @@
+#pragma once
+
+// Periodic hardware timer, built on ESP-IDF's GPTimer driver: it counts up at
+// 1 MHz and raises an alarm every {{.Period}}. At each alarm, {{.Name}}_on_alarm
+// in {{.Name}}.c runs in ISR context: add the ISR-safe work there.
+
+// Creates the timer, sets its periodic alarm and enables it, without
+// starting it. Call it once. Aborts if no general purpose timer is free.
+void {{.Name}}_init(void);
+
+// Starts counting. {{.Name}}_init leaves the count at 0, so the first alarm
+// comes one period after the first start. Aborts before {{.Name}}_init or if
+// the timer is already running.
+void {{.Name}}_start(void);
+
+// Stops counting. The count is kept, so {{.Name}}_start resumes the current
+// period. Aborts if the timer is not running.
+void {{.Name}}_stop(void);

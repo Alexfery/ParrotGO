@@ -164,6 +164,37 @@ func TestClaimsSPIBus(t *testing.T) {
 	}
 }
 
+// A timer claims a general purpose timer, and no GPIO.
+func TestClaimsTimer(t *testing.T) {
+	esp32, _ := targets.Get("esp32")
+	cfg := project.Config{Target: "esp32", Components: []project.ComponentConfig{
+		entry(t, "timer", "heartbeat", `{"mode": "periodic", "period_us": 1000000}`),
+	}}
+	claims, err := catalog.Claims(cfg, esp32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := claims[0]; c.Component != "heartbeat" || !c.GPTimer || len(c.GPIOs) != 0 || c.LEDC != nil || c.I2CController || c.SPIHost {
+		t.Errorf("claim = %+v, want heartbeat with a general purpose timer only", c)
+	}
+
+	tests := []struct {
+		config  string
+		wantErr string
+	}{
+		{`{"mode": "periodic", "period_us": 0}`, "period must be positive"},
+		{`{"mode": "one-shot", "period_us": 1000}`, `unsupported timer mode "one-shot"`},
+		{`{"mode": "periodic", "period": "1s"}`, `invalid config for component "heartbeat"`},
+		{`{"mode": "periodic", "period_us": -1}`, `invalid config for component "heartbeat"`},
+	}
+	for _, tt := range tests {
+		cfg.Components[0] = entry(t, "timer", "heartbeat", tt.config)
+		if _, err := catalog.Claims(cfg, esp32); err == nil || !strings.HasPrefix(err.Error(), tt.wantErr) {
+			t.Errorf("Claims with %s: error = %v, want prefix %q", tt.config, err, tt.wantErr)
+		}
+	}
+}
+
 // An SPI device claims its CS GPIO only, and its conflicts name it, and its
 // bus, by type.
 func TestClaimsSPIDevice(t *testing.T) {
