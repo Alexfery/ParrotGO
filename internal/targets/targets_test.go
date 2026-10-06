@@ -213,6 +213,23 @@ func TestI2C(t *testing.T) {
 	}
 }
 
+// TestGPTimer checks the general purpose timers against ESP-IDF's
+// esp_hal_timg/<target>/include/hal/timg_ll.h (TIMG_LL_INST_NUM *
+// TIMG_LL_GPTIMERS_PER_INST) and timer_ll.h (TIMER_LL_COUNTER_BIT_WIDTH).
+func TestGPTimer(t *testing.T) {
+	want := map[string]targets.GPTimer{
+		"esp32":    {Timers: 4, CounterBits: 64},
+		"esp32-c3": {Timers: 2, CounterBits: 54},
+		"esp32-s3": {Timers: 4, CounterBits: 54},
+		"esp32-c6": {Timers: 2, CounterBits: 54},
+	}
+	for _, target := range targets.All() {
+		if got := target.GPTimer; got != want[target.ID] {
+			t.Errorf("%s GPTimer = %+v, want %+v", target.ID, got, want[target.ID])
+		}
+	}
+}
+
 // Only the GP-SPI hosts that spi_bus_initialize accepts, in allocation order:
 // never SPI0 or SPI1, which serve the flash. ESP32-C3 and ESP32-C6 have one.
 func TestSPI(t *testing.T) {

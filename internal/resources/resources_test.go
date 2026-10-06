@@ -196,6 +196,49 @@ func TestNoI2CController(t *testing.T) {
 	}
 }
 
+func gpTimer(name string) resources.Claim {
+	return resources.Claim{Component: name, Needs: resources.Needs{GPTimer: true}}
+}
+
+// Timers are counted, like I2C controllers: ESP-IDF picks which one each
+// gets. They take no GPIO, so they never conflict with other components.
+func TestGPTimers(t *testing.T) {
+	tests := []struct {
+		target string
+		timers int
+	}{
+		{"esp32", 4},
+		{"esp32-c3", 2},
+		{"esp32-s3", 4},
+		{"esp32-c6", 2},
+	}
+	for _, tt := range tests {
+		target := mustTarget(t, tt.target)
+		claims := []resources.Claim{gpio("status", 2), pwm("fan", 3, 5000, 13), i2cBus("sensors", 4, 5)} // no timer
+		for i := 0; i < tt.timers; i++ {
+			claims = append(claims, gpTimer(fmt.Sprintf("tick%d", i)))
+		}
+		alloc, err := resources.Allocate(target, claims)
+		if err != nil || alloc.GPTimers != tt.timers {
+			t.Errorf("%s: %d timers: %d in use, error %v; want %d", tt.target, tt.timers, alloc.GPTimers, err, tt.timers)
+		}
+		_, err = resources.Allocate(target, append(claims, gpTimer("extra")))
+		want := "no general purpose timers available on " + target.DisplayName
+		var claimErr *resources.ClaimError
+		if err == nil || err.Error() != want || !errors.As(err, &claimErr) || claimErr.Component != "extra" {
+			t.Errorf("%s: %d timers: error = %v, want %q on extra", tt.target, tt.timers+1, err, want)
+		}
+	}
+}
+
+func TestNoGPTimer(t *testing.T) {
+	soc := targets.Target{DisplayName: "Test SoC"} // describes no timer
+	_, err := resources.Allocate(soc, []resources.Claim{gpTimer("heartbeat")})
+	if want := "no general purpose timers available on Test SoC"; err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+}
+
 // The bus owns both of its GPIOs.
 func TestI2CBusGPIOConflicts(t *testing.T) {
 	esp32 := mustTarget(t, "esp32")

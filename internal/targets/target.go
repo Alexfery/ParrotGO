@@ -82,6 +82,19 @@ type SPI struct {
 	Hosts []SPIHost
 }
 
+// GPTimer describes the general purpose timers of a SoC: the timers of its
+// timer groups (TIMG) that ESP-IDF's GPTimer driver hands out.
+type GPTimer struct {
+	// Timers is how many there are, all groups together
+	// (TIMER_LL_GPTIMERS_TOTAL). gptimer_new_timer takes any free one, so
+	// Parrot only counts them.
+	Timers int
+
+	// CounterBits is the width of their counter, and so of their alarm
+	// value (TIMER_LL_COUNTER_BIT_WIDTH).
+	CounterBits int
+}
+
 // SPIHost is an SPI controller.
 type SPIHost struct {
 	// Number is the peripheral's number, e.g. 2 for SPI2. It is not the
@@ -104,9 +117,10 @@ type Target struct {
 	DisplayName string // human-readable name
 	IDFTarget   string // name expected by ESP-IDF (idf.py set-target)
 
-	LEDC LEDC
-	I2C  I2C
-	SPI  SPI
+	LEDC    LEDC
+	I2C     I2C
+	SPI     SPI
+	GPTimer GPTimer
 
 	pins map[int]Pin
 }

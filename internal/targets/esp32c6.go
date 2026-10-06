@@ -6,6 +6,7 @@ package targets
 // ESP-IDF soc/esp32c6/include/soc/soc_caps.h (LEDC, SOC_HP_I2C_NUM, SOC_SPI_PERIPH_NUM) and clk_tree_defs.h (LEDC);
 // ESP-IDF esp_driver_spi/include/driver/spi_common.h (spi_bus_initialize:
 // "SPI0/1 is not supported") and hal/spi_types.h (spi_host_device_t);
+// ESP-IDF esp_hal_timg/esp32c6/include/hal/timg_ll.h and timer_ll.h (GPTimer);
 // https://docs.espressif.com/projects/esp-idf/en/stable/esp32c6/api-reference/peripherals/spi_master.html
 // https://docs.espressif.com/projects/esp-idf/en/stable/esp32c6/api-reference/peripherals/gpio.html
 //
@@ -20,8 +21,9 @@ var esp32C6 = Target{
 		Timers: 4, Channels: 6, MaxResolution: 20,
 		ClockSource: "LEDC_USE_PLL_DIV_CLK", ClockHz: 80_000_000, // PLL_F80M
 	},
-	I2C: I2C{HPControllers: 1},       // plus one LP I2C, not used
-	SPI: SPI{Hosts: []SPIHost{spi2}}, // SPI2 is the only GP-SPI
+	I2C:     I2C{HPControllers: 1},               // plus one LP I2C, not used
+	SPI:     SPI{Hosts: []SPIHost{spi2}},         // SPI2 is the only GP-SPI
+	GPTimer: GPTimer{Timers: 2, CounterBits: 54}, // two groups of one
 	pins: pinMap(
 		adcPins(ioPin, 1, 0, span(0, 6)...), // ADC1 CH0-6
 		withPins(ioPin, span(7, 23)...),

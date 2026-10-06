@@ -1,7 +1,8 @@
 // Package resources checks and assigns the hardware resources the components
 // of a project use: GPIOs, which components claim directly; LEDC timers and
-// channels and SPI hosts, which Parrot allocates; I2C controllers, which
-// Parrot only counts; and I2C addresses, which each device takes on its bus.
+// channels and SPI hosts, which Parrot allocates; I2C controllers and general
+// purpose timers, which Parrot only counts; and I2C addresses, which each
+// device takes on its bus.
 //
 // Allocation is recomputed from parrot.json on every change instead of being
 // stored: components are processed in manifest order, so the same manifest
@@ -31,6 +32,10 @@ type Needs struct {
 	// SPI hosts. Its devices do not set it: they share the bus's host and
 	// GPIOs, and each one only claims the GPIO of its CS line.
 	SPIHost bool
+
+	// GPTimer is set by a timer, which takes one of the target's general
+	// purpose timers.
+	GPTimer bool
 
 	// I2CAddress is set by an I2C device: the address it takes on its bus.
 	I2CAddress *I2CAddress
@@ -87,6 +92,11 @@ type Allocation struct {
 	// created (spi_bus_initialize has no "any free host"), so Parrot assigns
 	// it: each bus gets the target's next unused host, in the target's order.
 	SPIHosts map[string]targets.SPIHost
+
+	// GPTimers is how many general purpose timers the timers use. Like the
+	// I2C controllers, which one each gets is left to ESP-IDF
+	// (gptimer_new_timer takes a free one), so only their number matters.
+	GPTimers int
 }
 
 // ClaimError is the error Allocate returns for the first claim it cannot
@@ -101,8 +111,9 @@ func (e *ClaimError) Error() string { return e.Err.Error() }
 func (e *ClaimError) Unwrap() error { return e.Err }
 
 // Allocate checks that no GPIO, I2C address or driven device is claimed twice
-// and that the target has enough I2C controllers, and assigns LEDC timers and
-// channels, processing claims in order. Its error is a *ClaimError.
+// and that the target has enough I2C controllers and general purpose timers,
+// and assigns LEDC timers and channels, processing claims in order. Its error
+// is a *ClaimError.
 func Allocate(target targets.Target, claims []Claim) (Allocation, error) {
 	a := allocator{
 		target:        target,
@@ -162,6 +173,12 @@ func (a *allocator) take(c Claim) error {
 		}
 		a.alloc.SPIHosts[c.Component] = a.target.SPI.Hosts[a.spiHosts]
 		a.spiHosts++
+	}
+	if c.GPTimer {
+		if a.alloc.GPTimers >= a.target.GPTimer.Timers {
+			return fmt.Errorf("no general purpose timers available on %s", a.target.DisplayName)
+		}
+		a.alloc.GPTimers++
 	}
 	if addr := c.I2CAddress; addr != nil {
 		if owner, used := a.addressOwners[*addr]; used {

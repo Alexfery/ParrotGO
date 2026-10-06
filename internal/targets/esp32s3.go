@@ -6,6 +6,7 @@ package targets
 // ESP-IDF soc/esp32s3/include/soc/soc_caps.h (LEDC, SOC_HP_I2C_NUM, SOC_SPI_PERIPH_NUM) and clk_tree_defs.h (LEDC);
 // ESP-IDF esp_driver_spi/include/driver/spi_common.h (spi_bus_initialize:
 // "SPI0/1 is not supported") and hal/spi_types.h (spi_host_device_t);
+// ESP-IDF esp_hal_timg/esp32s3/include/hal/timg_ll.h and timer_ll.h (GPTimer);
 // https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/spi_master.html
 // https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/gpio.html
 //
@@ -20,8 +21,9 @@ var esp32S3 = Target{
 		Timers: 4, Channels: 8, MaxResolution: 14,
 		ClockSource: "LEDC_USE_APB_CLK", ClockHz: 80_000_000,
 	},
-	I2C: I2C{HPControllers: 2},
-	SPI: SPI{Hosts: []SPIHost{spi2, spi3}},
+	I2C:     I2C{HPControllers: 2},
+	SPI:     SPI{Hosts: []SPIHost{spi2, spi3}},
+	GPTimer: GPTimer{Timers: 4, CounterBits: 54}, // two groups of two
 	pins: pinMap(
 		withPins(ioPin, 0),
 		adcPins(ioPin, 1, 0, span(1, 10)...),  // ADC1 CH0-9

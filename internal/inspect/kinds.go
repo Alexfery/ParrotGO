@@ -13,6 +13,7 @@ import (
 	"parrot/internal/components/sensor/bme280"
 	"parrot/internal/components/spi"
 	"parrot/internal/components/spidevice"
+	"parrot/internal/components/timer"
 	"parrot/internal/project"
 	"parrot/internal/targets"
 )
@@ -42,6 +43,7 @@ var kinds = map[string]kind{
 	spi.Type:       {label: "SPI Bus", describe: describeSPIBus},
 	spidevice.Type: {label: "SPI Device", group: "Devices", describe: describeSPIDevice},
 	bme280.Type:    {label: "BME280", group: "Sensor", describe: describeBME280},
+	timer.Type:     {label: "Timer", describe: describeTimer},
 }
 
 func describeLED(e *entry, target *targets.Target) {
@@ -193,6 +195,20 @@ func describeBME280(e *entry, _ *targets.Target) {
 		return
 	}
 	e.dependsOn(requirement{role: "device", name: cfg.Device, typ: i2cdevice.Type, what: "an I2C device", check: checkBME280Device})
+}
+
+// describeTimer shows the timer's mode and period. Its general purpose timer
+// is not shown: ESP-IDF picks it when the timer is created, so Parrot does not
+// know which.
+func describeTimer(e *entry, target *targets.Target) {
+	cfg, ok := decode[timer.Config](e)
+	if !ok {
+		return
+	}
+	e.add(setting("Mode", cfg.Mode), setting("Period", timer.FormatPeriod(cfg.PeriodUS)))
+	if target != nil {
+		e.check(timer.Validate(*target, cfg))
+	}
 }
 
 // checkBME280Device applies the BME280's rule to the device it is built on.
