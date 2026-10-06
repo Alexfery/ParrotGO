@@ -12,7 +12,7 @@ Parrot is a developer-friendly CLI for ESP32 and ESP-IDF projects, written in Go
 It aims to bring a modern framework-CLI experience (similar to Nest CLI) to
 embedded development. Its mascot is a parrot.
 
-Presentation page: <https://parrotgodocs-exgywo07p-alexferys-projects.vercel.app/>
+Presentation page: <https://parrotgodocs.vercel.app/>
 
 > Status: `parrot new`, `parrot add led|button|adc|pwm|i2c|i2c-device|spi|spi-device`, `parrot add sensor bme280`, `parrot build`, `parrot flash`, `parrot monitor`, `parrot doctor` and `parrot inspect` are implemented.
 
