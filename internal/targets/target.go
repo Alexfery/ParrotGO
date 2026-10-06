@@ -70,6 +70,33 @@ type I2C struct {
 	HPControllers int
 }
 
+// SPI describes the SPI controllers of a SoC that Parrot can use as masters.
+type SPI struct {
+	// Hosts are the general purpose SPI controllers (GP-SPI) that the SPI
+	// Master driver can initialize with spi_bus_initialize, in the order
+	// Parrot allocates them to the project's buses. SPI0 and SPI1 are never
+	// listed: they serve the flash (and PSRAM) and spi_bus_initialize does not
+	// support them. Signals reach any GPIO through the GPIO matrix, so the
+	// hosts set no constraint on the pins.
+	Hosts []SPIHost
+}
+
+// SPIHost is an SPI controller.
+type SPIHost struct {
+	// Number is the peripheral's number, e.g. 2 for SPI2. It is not the
+	// value of ESP-IDF's spi_host_device_t (SPI2_HOST is 1): generated code
+	// uses Symbol.
+	Number int
+	Symbol string // spi_host_device_t, e.g. "SPI2_HOST"
+}
+
+// spi2 and spi3 are the GP-SPI hosts of the targets; ESP-IDF names them the
+// same on every target (hal/spi_types.h).
+var (
+	spi2 = SPIHost{Number: 2, Symbol: "SPI2_HOST"}
+	spi3 = SPIHost{Number: 3, Symbol: "SPI3_HOST"}
+)
+
 // Target describes a supported SoC.
 type Target struct {
 	ID          string // Parrot ID, used in the CLI and in parrot.json
@@ -78,8 +105,16 @@ type Target struct {
 
 	LEDC LEDC
 	I2C  I2C
+	SPI  SPI
 
 	pins map[int]Pin
+}
+
+// clone copies t so callers cannot modify the registry through its slices.
+// The pins are only reachable through Pin and Pins, which copy them.
+func (t Target) clone() Target {
+	t.SPI.Hosts = slices.Clone(t.SPI.Hosts)
+	return t
 }
 
 // Pin returns the GPIO with the given number, if the SoC has it.

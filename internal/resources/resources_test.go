@@ -1,6 +1,7 @@
 package resources_test
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -44,6 +45,20 @@ func TestGPIOConflicts(t *testing.T) {
 		if err == nil || err.Error() != `GPIO4 is already used by component "status"` {
 			t.Errorf("%s: error = %v", tt.name, err)
 		}
+	}
+}
+
+// The error names the claim that failed and keeps the cause's message.
+func TestAllocateClaimError(t *testing.T) {
+	_, err := resources.Allocate(mustTarget(t, "esp32"), []resources.Claim{
+		gpio("status", 4), pwm("fan", 5, 5000, 13), gpio("user", 4),
+	})
+	var claimErr *resources.ClaimError
+	if !errors.As(err, &claimErr) || claimErr.Component != "user" {
+		t.Fatalf("error = %#v, want a ClaimError on user", err)
+	}
+	if err.Error() != `GPIO4 is already used by component "status"` {
+		t.Errorf("message = %q", err.Error())
 	}
 }
 
@@ -256,5 +271,99 @@ func TestDrivenDevices(t *testing.T) {
 	_, err = resources.Allocate(esp32, append(claims, driver("second", "environment_device")))
 	if want := `component "environment_device" is already driven by component "environment"`; err == nil || err.Error() != want {
 		t.Errorf("error = %v, want %q", err, want)
+	}
+}
+
+func spiBus(name string, pins ...int) resources.Claim {
+	return resources.Claim{Component: name, Needs: resources.Needs{GPIOs: pins, SPIHost: true}}
+}
+
+// Each bus gets the target's next SPI host, in manifest order, until there
+// are none left.
+func TestSPIHosts(t *testing.T) {
+	for _, target := range targets.All() {
+		claims := []resources.Claim{gpio("status", 2), i2cBus("sensors", 3, 4)} // no SPI host
+		for i := range target.SPI.Hosts {
+			claims = append(claims, spiBus(fmt.Sprintf("bus%d", i), 5+3*i, 6+3*i, 7+3*i))
+		}
+		alloc, err := resources.Allocate(target, claims)
+		if err != nil {
+			t.Fatalf("%s: %v", target.ID, err)
+		}
+		for i, host := range target.SPI.Hosts {
+			if got := alloc.SPIHosts[fmt.Sprintf("bus%d", i)]; got != host {
+				t.Errorf("%s: bus%d host = %v, want %v", target.ID, i, got, host)
+			}
+		}
+		if len(alloc.SPIHosts) != len(target.SPI.Hosts) {
+			t.Errorf("%s: hosts = %v, want one per bus", target.ID, alloc.SPIHosts)
+		}
+
+		_, err = resources.Allocate(target, append(claims, spiBus("extra", 20, 21)))
+		want := "no SPI hosts available on " + target.DisplayName
+		if err == nil || err.Error() != want {
+			t.Errorf("%s: one bus too many: error = %v, want %q", target.ID, err, want)
+		}
+	}
+}
+
+func TestSPIHostsFirstAndSecond(t *testing.T) {
+	alloc, err := resources.Allocate(mustTarget(t, "esp32"), []resources.Claim{
+		spiBus("main_bus", 23, 19, 18),
+		gpio("status", 4),
+		spiBus("display_bus", 13, 14), // no MISO
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := alloc.SPIHosts["main_bus"].Symbol; got != "SPI2_HOST" {
+		t.Errorf("first bus host = %s, want SPI2_HOST", got)
+	}
+	if got := alloc.SPIHosts["display_bus"].Symbol; got != "SPI3_HOST" {
+		t.Errorf("second bus host = %s, want SPI3_HOST", got)
+	}
+	if _, has := alloc.SPIHosts["status"]; has {
+		t.Error("an LED got an SPI host")
+	}
+}
+
+func TestNoSPIHost(t *testing.T) {
+	c3 := mustTarget(t, "esp32-c3")
+	c3.SPI.Hosts = nil // a SoC whose SPI controllers all serve the flash
+	_, err := resources.Allocate(c3, []resources.Claim{spiBus("main_bus", 4, 2, 5)})
+	if want := "no SPI hosts available on ESP32-C3"; err == nil || err.Error() != want {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+}
+
+// Appending a bus never moves the host of an earlier one.
+func TestSPIHostsAreStable(t *testing.T) {
+	esp32 := mustTarget(t, "esp32")
+	first, err := resources.Allocate(esp32, []resources.Claim{spiBus("a", 23, 19, 18)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	both, err := resources.Allocate(esp32, []resources.Claim{spiBus("a", 23, 19, 18), spiBus("b", 13, 12, 14)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SPIHosts["a"] != both.SPIHosts["a"] {
+		t.Errorf("adding a bus moved the first one from %v to %v", first.SPIHosts["a"], both.SPIHosts["a"])
+	}
+}
+
+// The bus owns all of its GPIOs.
+func TestSPIBusGPIOConflicts(t *testing.T) {
+	esp32 := mustTarget(t, "esp32")
+	for _, claims := range [][]resources.Claim{
+		{gpio("status", 23), spiBus("main_bus", 23, 19, 18)},
+		{gpio("status", 19), spiBus("main_bus", 23, 19, 18)},
+		{gpio("status", 18), spiBus("main_bus", 23, 19, 18)},
+	} {
+		pin := claims[0].GPIOs[0]
+		_, err := resources.Allocate(esp32, claims)
+		if want := fmt.Sprintf("GPIO%d is already used by component \"status\"", pin); err == nil || err.Error() != want {
+			t.Errorf("LED on GPIO%d: error = %v, want %q", pin, err, want)
+		}
 	}
 }

@@ -1,0 +1,8 @@
+idf_component_register(
+    SRCS "{{.Name}}.c"
+    INCLUDE_DIRS "include"
+    # REQUIRES, not PRIV_REQUIRES: {{.Name}}.h includes driver/spi_master.h for
+    # spi_host_device_t, so every component using this bus needs
+    # esp_driver_spi's headers too.
+    REQUIRES esp_driver_spi
+)

@@ -1,0 +1,30 @@
+#pragma once
+
+#include "driver/spi_master.h"
+#include "esp_err.h"
+
+// SPI master bus on {{.Host}}: MOSI GPIO{{.MOSI}}, {{if .HasMISO}}MISO GPIO{{.MISO}}{{else}}no MISO{{end}}, SCLK GPIO{{.SCLK}}.
+// It owns these lines and the SPI host, which the devices attached to it
+// share. Each device has its own CS line, clock frequency and SPI mode, given
+// when it is added with
+// spi_bus_add_device({{.Name}}_get_host(), &device_config, &device).
+{{- if not .HasMISO}}
+//
+// The bus has no MISO line: it can only send, which suits write-only devices
+// such as some displays.
+{{- end}}
+
+// Initializes the bus, with DMA on a channel the driver picks. Returns
+// ESP_ERR_INVALID_STATE if the bus is already initialized, by this function
+// or by other code on the same host, otherwise the error of
+// spi_bus_initialize (e.g. ESP_ERR_NOT_FOUND when no DMA channel is free).
+esp_err_t {{.Name}}_init(void);
+
+// Frees the bus. Remove its devices first (spi_bus_remove_device): returns
+// ESP_ERR_INVALID_STATE while devices are attached or before {{.Name}}_init.
+esp_err_t {{.Name}}_deinit(void);
+
+// Returns the SPI host of the bus, for spi_bus_add_device. Parrot chose it
+// when the bus was added, so it does not change at run time; devices can be
+// added only once {{.Name}}_init has succeeded.
+spi_host_device_t {{.Name}}_get_host(void);

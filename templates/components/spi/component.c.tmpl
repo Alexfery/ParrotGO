@@ -1,0 +1,69 @@
+#include <stdbool.h>
+
+#include "driver/spi_master.h"
+#include "esp_err.h"
+#include "{{.Name}}.h"
+
+// GPIOs on {{.Target}}, checked by Parrot: MOSI and SCLK are output GPIOs{{if .HasMISO}} and
+// MISO is an input GPIO{{end}}. The driver routes the signals through the GPIO
+// matrix.
+#define {{.Macro}}_MOSI_GPIO {{.MOSI}}
+{{- if .HasMISO}}
+#define {{.Macro}}_MISO_GPIO {{.MISO}}
+{{- end}}
+#define {{.Macro}}_SCLK_GPIO {{.SCLK}}
+
+// Allocated by Parrot: each SPI bus of the project takes the next free SPI
+// host of {{.Target}}, in parrot.json order.
+#define {{.Macro}}_HOST {{.Host}}
+
+static bool {{.Name}}_initialized = false;
+
+esp_err_t {{.Name}}_init(void)
+{
+    if ({{.Name}}_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    spi_bus_config_t config = {
+        .mosi_io_num = {{.Macro}}_MOSI_GPIO,
+{{- if .HasMISO}}
+        .miso_io_num = {{.Macro}}_MISO_GPIO,
+{{- else}}
+        .miso_io_num = -1, // no MISO: the bus only sends
+{{- end}}
+        .sclk_io_num = {{.Macro}}_SCLK_GPIO,
+        // Not used: -1 disables the lines of the quad and octal modes.
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .data4_io_num = -1,
+        .data5_io_num = -1,
+        .data6_io_num = -1,
+        .data7_io_num = -1,
+        // 0: the driver's default, 4092 bytes per transaction with DMA.
+        .max_transfer_sz = 0,
+    };
+    // No clock frequency, SPI mode or CS here: each device sets its own.
+    esp_err_t err = spi_bus_initialize({{.Macro}}_HOST, &config, SPI_DMA_CH_AUTO);
+    if (err == ESP_OK) {
+        {{.Name}}_initialized = true;
+    }
+    return err;
+}
+
+esp_err_t {{.Name}}_deinit(void)
+{
+    if (!{{.Name}}_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    // Fails with ESP_ERR_INVALID_STATE while devices are still attached.
+    esp_err_t err = spi_bus_free({{.Macro}}_HOST);
+    if (err == ESP_OK) {
+        {{.Name}}_initialized = false;
+    }
+    return err;
+}
+
+spi_host_device_t {{.Name}}_get_host(void)
+{
+    return {{.Macro}}_HOST;
+}

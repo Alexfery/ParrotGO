@@ -1,6 +1,7 @@
 package catalog_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -37,6 +38,21 @@ func TestClaims(t *testing.T) {
 	}
 	if claims[0].LEDC != nil {
 		t.Error("an LED should not need LEDC")
+	}
+}
+
+// Claim is the claim of one component, as Claims gives it.
+func TestClaim(t *testing.T) {
+	esp32, _ := targets.Get("esp32")
+	claim, err := catalog.Claim(entry(t, "pwm", "fan", `{"pin": 19, "frequency": 25000}`), esp32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.Component != "fan" || len(claim.GPIOs) != 1 || claim.GPIOs[0] != 19 || claim.LEDC == nil {
+		t.Errorf("claim = %+v, want fan on GPIO19 with LEDC", claim)
+	}
+	if _, err := catalog.Claim(entry(t, "servo", "arm", `{"pin": 4}`), esp32); err == nil {
+		t.Error("Claim accepted an unknown type")
 	}
 }
 
@@ -121,5 +137,29 @@ func TestClaimsBME280(t *testing.T) {
 	cfg.Components[2] = entry(t, "sensor-bme280", "environment", `{"device": "environment_device", "address": 118}`)
 	if _, err := catalog.Claims(cfg, esp32); err == nil || !strings.HasPrefix(err.Error(), `invalid config for component "environment"`) {
 		t.Errorf("Claims with an address in the sensor's config: error = %v", err)
+	}
+}
+
+// An SPI bus claims its GPIOs, MISO only when it has one, and an SPI host.
+func TestClaimsSPIBus(t *testing.T) {
+	esp32, _ := targets.Get("esp32")
+	cfg := project.Config{Target: "esp32", Components: []project.ComponentConfig{
+		entry(t, "spi-bus", "main_bus", `{"mosi": 23, "miso": 19, "sclk": 18}`),
+		entry(t, "spi-bus", "display_bus", `{"mosi": 13, "sclk": 14}`),
+	}}
+	claims, err := catalog.Claims(cfg, esp32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := claims[0]; !slices.Equal(c.GPIOs, []int{23, 19, 18}) || !c.SPIHost || c.I2CController || c.LEDC != nil {
+		t.Errorf("main_bus claim = %+v, want GPIO23, GPIO19, GPIO18 and an SPI host", c)
+	}
+	if c := claims[1]; !slices.Equal(c.GPIOs, []int{13, 14}) || !c.SPIHost {
+		t.Errorf("display_bus claim = %+v, want GPIO13, GPIO14 and an SPI host", c)
+	}
+
+	cfg.Components[1] = entry(t, "spi-bus", "display_bus", `{"mosi": 13, "sclk": 14, "cs": 5}`)
+	if _, err := catalog.Claims(cfg, esp32); err == nil || !strings.HasPrefix(err.Error(), `invalid config for component "display_bus"`) {
+		t.Errorf("Claims with a CS on the bus: error = %v", err)
 	}
 }

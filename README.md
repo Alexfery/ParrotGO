@@ -12,7 +12,7 @@ Parrot is a developer-friendly CLI for ESP32 and ESP-IDF projects, written in Go
 It aims to bring a modern framework-CLI experience (similar to Nest CLI) to
 embedded development. Its mascot is a parrot.
 
-> Status: `parrot new`, `parrot add led|button|adc|pwm|i2c|i2c-device`, `parrot add sensor bme280`, `parrot build`, `parrot flash`, `parrot monitor` and `parrot doctor` are implemented.
+> Status: `parrot new`, `parrot add led|button|adc|pwm|i2c|i2c-device|spi`, `parrot add sensor bme280`, `parrot build`, `parrot flash`, `parrot monitor`, `parrot doctor` and `parrot inspect` are implemented.
 
 ## Usage
 
@@ -24,6 +24,8 @@ go run . add button user --pin 18
 go run . add adc light --pin 34
 go run . add pwm fan --pin 18 --frequency 5000
 go run . add i2c sensors --sda 21 --scl 22   # I2C master bus
+go run . add spi main-bus --mosi 23 --miso 19 --sclk 18   # SPI master bus
+go run . add spi display-bus --mosi 23 --sclk 18          # write-only: no MISO
 go run . add i2c-device display --bus sensors --address 0x3C --frequency 400000
 go run . add i2c-device environment-device --bus sensors --address 0x76 --frequency 400000
 go run . add sensor bme280 environment --device environment-device
@@ -33,7 +35,13 @@ go run . flash --port COM5         # or -p /dev/ttyUSB0
 go run . monitor                   # Ctrl+] to leave
 go run . monitor --port COM5
 go run . doctor                    # checks the environment, and the project if any
+go run . inspect                   # explains the project's hardware structure
 ```
+
+In a terminal, the help shows the mascot in color, and `parrot` without
+arguments first plays a short animation of it (`parrot --help` shows the help
+right away). When the output is redirected or `NO_COLOR` is set, the help is
+plain text, without the animation.
 
 Build the `parrot` executable:
 
@@ -53,11 +61,17 @@ go build -o parrot .
 | `internal/components/sensor/` | Sensor drivers, one package per sensor (`bme280/`).               |
 | `internal/espidf/`            | Integration with ESP-IDF tooling (`idf.py` build/flash/monitor).  |
 | `internal/doctor/`            | Read-only checks of the environment and the project.              |
+| `internal/inspect/`           | Turns `parrot.json` into component trees, and renders them.       |
 | `templates/`                  | Templates for generated files, embedded into the binary.          |
 
 Generated projects are meant to stay compatible with standard ESP-IDF tooling
 (ESP-IDF v5.3 or newer: the components depend on `esp_driver_gpio`,
-`esp_driver_ledc` and `esp_adc`).
+`esp_driver_ledc`, `esp_adc`, `esp_driver_i2c` and `esp_driver_spi`).
+
+Component names are normalized (lowercase, `-` becomes `_`) and must not be
+`main`: ESP-IDF adds `components/` after the project's `main` folder, and a
+component added later replaces one with the same name, so `components/main`
+would silently replace `app_main`.
 
 ## I2C buses
 
@@ -123,6 +137,54 @@ yet), `display_deinit()` removes the device only, and `sensors_deinit()` refuses
 while devices are attached. In CMake the device has `REQUIRES esp_driver_i2c`
 (its header exposes the handle type) and `PRIV_REQUIRES <bus>` (only its `.c`
 includes the bus header).
+
+## SPI buses
+
+`parrot add spi <name> --mosi <gpio> [--miso <gpio>] --sclk <gpio>` adds an SPI
+master bus: the shared transport of the SPI devices a future
+`parrot add spi-device` will attach to.
+
+```
+main_bus
+└── SPI Bus
+    ├── Host: SPI2_HOST
+    ├── MOSI: GPIO23
+    ├── MISO: GPIO19
+    └── SCLK: GPIO18
+```
+
+- **The bus owns its GPIOs and one SPI host.** CS, clock frequency, SPI mode
+  and queue size belong to each device (`spi_device_interface_config_t`), so
+  the bus has no `--cs`, `--frequency` or `--mode`.
+- **Hosts** come from the target registry: only the general purpose SPI
+  controllers that `spi_bus_initialize` accepts (never SPI0 or SPI1, which
+  serve the flash). ESP32 and ESP32-S3 have `SPI2_HOST` and `SPI3_HOST`;
+  ESP32-C3 and ESP32-C6 only `SPI2_HOST`.
+- **Allocation:** unlike I2C, ESP-IDF needs the host when the bus is created,
+  so Parrot picks it: buses take the target's hosts in order, in `parrot.json`
+  order, and a bus too many fails with `no SPI hosts available on <target>`.
+  The host is not stored: it is derived again on every change, and
+  `parrot inspect` shows the same one.
+- **GPIOs:** MOSI and SCLK, which the master drives, need output GPIOs; MISO,
+  which it reads, an input GPIO (an input-only GPIO such as the ESP32's
+  GPIO34-39 is fine). The signals go through the GPIO matrix, so any such GPIO
+  works; pins must be distinct, and the flash pins are rejected.
+- **No MISO:** without `--miso` the bus only sends (e.g. to a display):
+  `parrot.json` has no `"miso"` and the generated code sets
+  `.miso_io_num = -1`. Unused quad and octal lines are set to `-1` too.
+- **DMA:** `SPI_DMA_CH_AUTO`, accepted on every supported target: the driver
+  picks the DMA channel. With a 32 Mbit PSRAM at 80 MHz, the ESP32 uses one
+  GP-SPI host for the PSRAM clock (SPI3 by default), which is why SPI2 is
+  allocated first.
+
+The component exposes `<name>_init()` (`spi_bus_initialize`; returns
+`ESP_ERR_INVALID_STATE` if the bus is already initialized), `<name>_deinit()`
+(`spi_bus_free`, which fails while devices are attached: remove them first)
+and `<name>_get_host()`, the `spi_host_device_t` devices pass to
+`spi_bus_add_device()`. Errors are returned, never `ESP_ERROR_CHECK`ed. Its
+`CMakeLists.txt` uses `REQUIRES esp_driver_spi` (public), because its header
+exposes `spi_host_device_t`. There are no transactions on the bus: they will
+belong to the devices.
 
 ## Sensors
 
@@ -286,12 +348,52 @@ only inspects: it never installs, activates or changes anything.
 - Every command has a time limit: 20 s for version commands, 2 min for
   `idf_tools.py check` (about 10 s, but up to a minute on a cold start).
 
+## Inspect
+
+`parrot inspect` explains the hardware structure of the current project. It
+does not pretty-print `parrot.json`: it turns the flat list of components into
+trees, and adds what Parrot derives instead of storing.
+
+```
+sensors
+└── I2C Bus
+    ├── SDA: GPIO21
+    ├── SCL: GPIO22
+    └── Devices
+        └── environment_device (I2C Device)
+            ├── Address: 0x76
+            ├── Frequency: 400000 Hz
+            └── Sensor
+                └── environment (BME280)
+```
+
+- **Hierarchy:** an I2C device is listed under its bus and a sensor under its
+  device, whatever their order in `parrot.json`. Other components are listed at
+  the top level, in manifest order, so the output is always the same.
+- **Derived information:** the ADC unit and channel of a GPIO come from the
+  target registry; the LEDC timer and channel of a PWM output and the host of
+  an SPI bus come from the same allocator code generation uses, so inspect
+  shows what the generated code contains. The I2C controller of a bus is not
+  shown: ESP-IDF picks it.
+- **Integrity:** a missing dependency, a dependency of the wrong type, a
+  duplicate name, an invalid config, a resource conflict or an unsupported
+  target is shown as `ERROR:` on the component and makes the command exit with
+  a non-zero status. An unknown component type (e.g. from a newer Parrot) is a
+  `WARNING:`. When a component cannot be allocated, the LEDC channels and SPI
+  hosts of the components after it are not shown, as they depend on it.
+- **Read only:** nothing is written, generated or fixed (an old manifest is not
+  migrated), and ESP-IDF is not needed.
+
+The analysis (`inspect.Resolve`) returns a model and prints nothing; a
+renderer (`inspect.TextRenderer`) presents it as plain text, without colors, so
+it reads the same in a terminal, a file or a CI log.
+
 ## parrot.json
 
 `parrot.json` records the user's intent: the target and the components with
 their settings. Hardware details that Parrot can derive (ADC unit/channel,
-LEDC timer/channel) are not stored; they are recomputed from the target and
-the component order. The I2C controller of a bus is not stored either: ESP-IDF
+LEDC timer/channel, SPI host) are not stored; they are recomputed from the
+target and the component order. The I2C controller of a bus is not stored either: ESP-IDF
 picks it at run time.
 
 ```json

@@ -13,6 +13,7 @@ import (
 	"parrot/internal/components/led"
 	"parrot/internal/components/pwm"
 	"parrot/internal/components/sensor/bme280"
+	"parrot/internal/components/spi"
 	"parrot/internal/project"
 	"parrot/internal/resources"
 	"parrot/internal/targets"
@@ -23,13 +24,23 @@ import (
 func Claims(cfg project.Config, target targets.Target) ([]resources.Claim, error) {
 	claims := make([]resources.Claim, 0, len(cfg.Components))
 	for _, c := range cfg.Components {
-		n, err := needs(c, target)
+		claim, err := Claim(c, target)
 		if err != nil {
 			return nil, err
 		}
-		claims = append(claims, resources.Claim{Component: c.Name, Needs: n})
+		claims = append(claims, claim)
 	}
 	return claims, nil
+}
+
+// Claim returns the resources component c uses on target. It fails if c has
+// an unknown type or an invalid config.
+func Claim(c project.ComponentConfig, target targets.Target) (resources.Claim, error) {
+	n, err := needs(c, target)
+	if err != nil {
+		return resources.Claim{}, err
+	}
+	return resources.Claim{Component: c.Name, Needs: n}, nil
 }
 
 func needs(c project.ComponentConfig, target targets.Target) (resources.Needs, error) {
@@ -48,6 +59,8 @@ func needs(c project.ComponentConfig, target targets.Target) (resources.Needs, e
 		return decodeNeeds[i2cdevice.Config](c, target)
 	case bme280.Type:
 		return decodeNeeds[bme280.Config](c, target)
+	case spi.Type:
+		return decodeNeeds[spi.Config](c, target)
 	}
 	return resources.Needs{}, fmt.Errorf("component %q in %s has unknown type %q", c.Name, project.ConfigFile, c.Type)
 }

@@ -3,7 +3,10 @@ package targets
 // esp32 describes the original ESP32 SoC.
 // Sources: ESP32 Series Datasheet v5.3 (Table 2-1, Section 2.6);
 // ESP-IDF components/soc/esp32/include/soc/adc_channel.h;
-// ESP-IDF soc/esp32/include/soc/soc_caps.h (LEDC, SOC_HP_I2C_NUM) and clk_tree_defs.h (LEDC);
+// ESP-IDF soc/esp32/include/soc/soc_caps.h (LEDC, SOC_HP_I2C_NUM, SOC_SPI_PERIPH_NUM) and clk_tree_defs.h (LEDC);
+// ESP-IDF esp_driver_spi/include/driver/spi_common.h (spi_bus_initialize:
+// "SPI0/1 is not supported") and hal/spi_types.h (spi_host_device_t);
+// https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/spi_master.html
 // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/gpio.html
 //
 // GPIO20, GPIO24 and GPIO28-31 do not exist. GPIO34-39 are input only and
@@ -20,6 +23,11 @@ var esp32 = Target{
 		ClockSource: "LEDC_USE_APB_CLK", ClockHz: 80_000_000,
 	},
 	I2C: I2C{HPControllers: 2},
+	// SPI2 (HSPI) and SPI3 (VSPI). SPI2 comes first: with a 32 Mbit PSRAM at
+	// 80 MHz, ESP-IDF takes one of them for the PSRAM clock, by default SPI3
+	// (CONFIG_SPIRAM_OCCUPY_SPI_HOST), and spi_bus_initialize then reports it
+	// as in use.
+	SPI: SPI{Hosts: []SPIHost{spi2, spi3}},
 	pins: pinMap(
 		withPins(ioPin, 1, 3, 5, 16, 17, 18, 19, 21, 22, 23),
 		withPins(flashPin, span(6, 11)...),

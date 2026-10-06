@@ -1,14 +1,14 @@
 // Package resources checks and assigns the hardware resources the components
 // of a project use: GPIOs, which components claim directly; LEDC timers and
-// channels, which Parrot allocates; I2C controllers, which Parrot only counts;
-// and I2C addresses, which each device takes on its bus.
+// channels and SPI hosts, which Parrot allocates; I2C controllers, which
+// Parrot only counts; and I2C addresses, which each device takes on its bus.
 //
 // Allocation is recomputed from parrot.json on every change instead of being
 // stored: components are processed in manifest order, so the same manifest
 // always gives the same result and appending a component never moves the
 // resources of earlier ones. Generated code hardcodes the LEDC timers and
-// channels, so a future `parrot remove` must regenerate the components whose
-// allocation shifts.
+// channels and the SPI hosts, so a future `parrot remove` must regenerate the
+// components whose allocation shifts.
 package resources
 
 import (
@@ -26,6 +26,11 @@ type Needs struct {
 	// target's HP I2C controllers. Its devices do not set it: they share the
 	// bus's controller and GPIOs.
 	I2CController bool
+
+	// SPIHost is set by an SPI master bus, which takes one of the target's
+	// SPI hosts. Its future devices will not set it: they share the bus's
+	// host and GPIOs.
+	SPIHost bool
 
 	// I2CAddress is set by an I2C device: the address it takes on its bus.
 	I2CAddress *I2CAddress
@@ -61,50 +66,98 @@ type Allocation struct {
 	// the controllers are interchangeable, as their signals go through the
 	// GPIO matrix, so only their number matters.
 	I2CControllers int
+
+	// SPIHosts are the SPI hosts given to the buses, by component name.
+	// Unlike an I2C controller, the host must be named when the bus is
+	// created (spi_bus_initialize has no "any free host"), so Parrot assigns
+	// it: each bus gets the target's next unused host, in the target's order.
+	SPIHosts map[string]targets.SPIHost
 }
+
+// ClaimError is the error Allocate returns for the first claim it cannot
+// satisfy. Its message is the cause's; Component says which claim failed, so
+// that callers such as `parrot inspect` can report it on that component.
+type ClaimError struct {
+	Component string
+	Err       error
+}
+
+func (e *ClaimError) Error() string { return e.Err.Error() }
+func (e *ClaimError) Unwrap() error { return e.Err }
 
 // Allocate checks that no GPIO, I2C address or driven device is claimed twice
 // and that the target has enough I2C controllers, and assigns LEDC timers and
-// channels, processing claims in order.
+// channels, processing claims in order. Its error is a *ClaimError.
 func Allocate(target targets.Target, claims []Claim) (Allocation, error) {
-	gpioOwners := make(map[int]string)
-	addressOwners := make(map[I2CAddress]string)
-	driverOwners := make(map[string]string) // by device
-	ledc := ledcAllocator{target: target}
-	alloc := Allocation{LEDC: make(map[string]LEDCAssignment)}
-
+	a := allocator{
+		target:        target,
+		gpioOwners:    make(map[int]string),
+		addressOwners: make(map[I2CAddress]string),
+		driverOwners:  make(map[string]string),
+		ledc:          ledcAllocator{target: target},
+		alloc: Allocation{
+			LEDC:     make(map[string]LEDCAssignment),
+			SPIHosts: make(map[string]targets.SPIHost),
+		},
+	}
 	for _, c := range claims {
-		for _, pin := range c.GPIOs {
-			if owner, used := gpioOwners[pin]; used {
-				return Allocation{}, fmt.Errorf("GPIO%d is already used by component %q", pin, owner)
-			}
-			gpioOwners[pin] = c.Component
-		}
-		if c.LEDC != nil {
-			a, err := ledc.assign(*c.LEDC)
-			if err != nil {
-				return Allocation{}, err
-			}
-			alloc.LEDC[c.Component] = a
-		}
-		if c.I2CController {
-			if alloc.I2CControllers >= target.I2C.HPControllers {
-				return Allocation{}, fmt.Errorf("no I2C master controllers available on %s", target.DisplayName)
-			}
-			alloc.I2CControllers++
-		}
-		if a := c.I2CAddress; a != nil {
-			if owner, used := addressOwners[*a]; used {
-				return Allocation{}, fmt.Errorf("I2C address 0x%02X is already used on bus %q by component %q", a.Address, a.Bus, owner)
-			}
-			addressOwners[*a] = c.Component
-		}
-		if d := c.Drives; d != "" {
-			if owner, used := driverOwners[d]; used {
-				return Allocation{}, fmt.Errorf("component %q is already driven by component %q", d, owner)
-			}
-			driverOwners[d] = c.Component
+		if err := a.take(c); err != nil {
+			return Allocation{}, &ClaimError{Component: c.Component, Err: err}
 		}
 	}
-	return alloc, nil
+	return a.alloc, nil
+}
+
+// allocator is the state of one Allocate call.
+type allocator struct {
+	target        targets.Target
+	gpioOwners    map[int]string
+	addressOwners map[I2CAddress]string
+	driverOwners  map[string]string // by device
+	ledc          ledcAllocator
+	spiHosts      int // SPI hosts in use: the first ones of target.SPI.Hosts
+	alloc         Allocation
+}
+
+// take records the resources of c, or reports the first one it cannot have.
+func (a *allocator) take(c Claim) error {
+	for _, pin := range c.GPIOs {
+		if owner, used := a.gpioOwners[pin]; used {
+			return fmt.Errorf("GPIO%d is already used by component %q", pin, owner)
+		}
+		a.gpioOwners[pin] = c.Component
+	}
+	if c.LEDC != nil {
+		assignment, err := a.ledc.assign(*c.LEDC)
+		if err != nil {
+			return err
+		}
+		a.alloc.LEDC[c.Component] = assignment
+	}
+	if c.I2CController {
+		if a.alloc.I2CControllers >= a.target.I2C.HPControllers {
+			return fmt.Errorf("no I2C master controllers available on %s", a.target.DisplayName)
+		}
+		a.alloc.I2CControllers++
+	}
+	if c.SPIHost {
+		if a.spiHosts >= len(a.target.SPI.Hosts) {
+			return fmt.Errorf("no SPI hosts available on %s", a.target.DisplayName)
+		}
+		a.alloc.SPIHosts[c.Component] = a.target.SPI.Hosts[a.spiHosts]
+		a.spiHosts++
+	}
+	if addr := c.I2CAddress; addr != nil {
+		if owner, used := a.addressOwners[*addr]; used {
+			return fmt.Errorf("I2C address 0x%02X is already used on bus %q by component %q", addr.Address, addr.Bus, owner)
+		}
+		a.addressOwners[*addr] = c.Component
+	}
+	if d := c.Drives; d != "" {
+		if owner, used := a.driverOwners[d]; used {
+			return fmt.Errorf("component %q is already driven by component %q", d, owner)
+		}
+		a.driverOwners[d] = c.Component
+	}
+	return nil
 }

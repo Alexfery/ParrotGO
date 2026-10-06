@@ -2,7 +2,6 @@ package targets
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 )
 
@@ -14,7 +13,11 @@ var supported = []Target{esp32, esp32C3, esp32S3, esp32C6}
 
 // All returns every supported target.
 func All() []Target {
-	return slices.Clone(supported)
+	all := make([]Target, len(supported))
+	for i, t := range supported {
+		all[i] = t.clone()
+	}
+	return all
 }
 
 // Get returns the target with the given Parrot ID, or an error listing the
@@ -22,7 +25,7 @@ func All() []Target {
 func Get(id string) (Target, error) {
 	for _, t := range supported {
 		if t.ID == id {
-			return t, nil
+			return t.clone(), nil
 		}
 	}
 	return Target{}, fmt.Errorf("unsupported target %q\n\nSupported targets:\n%s", id, supportedList())
