@@ -12,6 +12,7 @@ import (
 	"parrot/internal/components/pwm"
 	"parrot/internal/components/sensor/bme280"
 	"parrot/internal/components/spi"
+	"parrot/internal/components/spidevice"
 	"parrot/internal/project"
 	"parrot/internal/targets"
 )
@@ -39,6 +40,7 @@ var kinds = map[string]kind{
 	i2c.Type:       {label: "I2C Bus", describe: describeI2CBus},
 	i2cdevice.Type: {label: "I2C Device", group: "Devices", describe: describeI2CDevice},
 	spi.Type:       {label: "SPI Bus", describe: describeSPIBus},
+	spidevice.Type: {label: "SPI Device", group: "Devices", describe: describeSPIDevice},
 	bme280.Type:    {label: "BME280", group: "Sensor", describe: describeBME280},
 }
 
@@ -161,6 +163,26 @@ func describeI2CDevice(e *entry, _ *targets.Target) {
 		Property{Name: "Address", Value: i2cdevice.FormatAddress(cfg.Address), Source: FromManifest, Owned: true},
 		setting("Frequency", hz(cfg.Frequency)),
 	)
+}
+
+// describeSPIDevice puts the device on its bus, with its CS line, which it
+// owns, and its clock settings. Its frequency and mode are checked by its
+// claim (see resolver.allocate), and a CS on a GPIO of its bus by the
+// allocator.
+func describeSPIDevice(e *entry, target *targets.Target) {
+	cfg, ok := decode[spidevice.Config](e)
+	if !ok {
+		return
+	}
+	e.dependsOn(requirement{role: "bus", name: cfg.Bus, typ: spi.Type, what: "a SPI bus"})
+	e.add(
+		gpio("CS", cfg.CS),
+		setting("Frequency", hz(cfg.Frequency)),
+		setting("Mode", fmt.Sprintf("%d (CPOL %d, CPHA %d)", cfg.Mode, cfg.CPOL(), cfg.CPHA())),
+	)
+	if target != nil {
+		e.check(spidevice.Validate(*target, cfg))
+	}
 }
 
 // describeBME280 puts the sensor on its device. It shows nothing else: the

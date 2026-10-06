@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -537,5 +538,83 @@ func TestResolveSPIBusProblems(t *testing.T) {
 	if bus.Properties[0].Name == "Host" || len(bus.Issues) != 1 ||
 		bus.Issues[0].Message != `SPI host cannot be determined: "something" comes earlier in parrot.json and cannot be allocated` {
 		t.Errorf("bus = %+v, want no host and a warning", bus)
+	}
+}
+
+var mainBus = component("spi-bus", "main_bus", `{"mosi": 23, "miso": 19, "sclk": 18}`)
+
+func spiDevice(name string, cs, frequency, mode int) project.ComponentConfig {
+	return component("spi-device", name, fmt.Sprintf(`{"bus": "main_bus", "cs": %d, "frequency": %d, "mode": %d}`, cs, frequency, mode))
+}
+
+func spiDeviceComponent(name, cs, frequency, mode string) inspect.Component {
+	return inspect.Component{
+		Name: name, Type: "spi-device", Label: "SPI Device",
+		Properties:   []inspect.Property{owned("CS", cs), setting("Frequency", frequency), setting("Mode", mode)},
+		Dependencies: []inspect.Dependency{{Role: "bus", Name: "main_bus", Type: "spi-bus", Resolved: true}},
+	}
+}
+
+// SPI devices are listed under their bus, in manifest order, and only there,
+// each with its own CS, frequency and mode.
+func TestResolveSPIDevices(t *testing.T) {
+	in := resolve("esp32", spiDevice("display", 5, 10_000_000, 0), status, mainBus, spiDevice("sensor", 17, 1_000_000, 3))
+	if len(in.Components) != 2 || in.Components[0].Name != "status" {
+		t.Fatalf("top level = %+v, want status and main_bus", in.Components)
+	}
+	checkComponent(t, in.Components[1], inspect.Component{
+		Name: "main_bus", Type: "spi-bus", Label: "SPI Bus",
+		Properties: []inspect.Property{host("SPI2_HOST"), owned("MOSI", "GPIO23"), owned("MISO", "GPIO19"), owned("SCLK", "GPIO18")},
+		Children: []inspect.Group{{Name: "Devices", Components: []inspect.Component{
+			spiDeviceComponent("display", "GPIO5", "10000000 Hz", "0 (CPOL 0, CPHA 0)"),
+			spiDeviceComponent("sensor", "GPIO17", "1000000 Hz", "3 (CPOL 1, CPHA 1)"),
+		}}},
+	})
+	checkCounts(t, in, 0, 0)
+}
+
+func TestResolveSPIDeviceProblems(t *testing.T) {
+	tests := []struct {
+		name       string
+		components []project.ComponentConfig
+		wantIssue  string
+	}{
+		{"missing bus", []project.ComponentConfig{spiDevice("display", 5, 10_000_000, 0)},
+			`dependency "main_bus" not found`},
+		{"wrong bus type", []project.ComponentConfig{component("led", "main_bus", `{"pin": 4}`), spiDevice("display", 5, 10_000_000, 0)},
+			`"main_bus" is not a SPI bus (its type is "led")`},
+		{"CS on a bus line", []project.ComponentConfig{mainBus, spiDevice("display", 23, 10_000_000, 0)},
+			`GPIO23 is already used by SPI bus "main_bus"`},
+		{"CS of another device", []project.ComponentConfig{mainBus, spiDevice("sensor", 5, 1_000_000, 3), spiDevice("display", 5, 10_000_000, 0)},
+			`GPIO5 is already used by SPI device "sensor"`},
+		{"input-only CS", []project.ComponentConfig{mainBus, spiDevice("display", 34, 10_000_000, 0)},
+			"GPIO34 cannot be used for SPI CS on ESP32: the master drives CS, so it needs an output GPIO"},
+		{"invalid mode", []project.ComponentConfig{mainBus, spiDevice("display", 5, 10_000_000, 4)},
+			"SPI mode must be between 0 and 3"},
+		{"invalid frequency", []project.ComponentConfig{mainBus, spiDevice("display", 5, 0, 0)},
+			"frequency must be positive, got 0 Hz"},
+	}
+	for _, tt := range tests {
+		in := resolve("esp32", tt.components...)
+		var display *inspect.Component
+		var find func(cs []inspect.Component)
+		find = func(cs []inspect.Component) {
+			for i := range cs {
+				if cs[i].Name == "display" {
+					display = &cs[i]
+				}
+				for _, g := range cs[i].Children {
+					find(g.Components)
+				}
+			}
+		}
+		find(in.Components)
+		if display == nil {
+			t.Errorf("%s: display not found in %+v", tt.name, in.Components)
+			continue
+		}
+		if !slices.Contains(display.Issues, errorIssue(tt.wantIssue)) {
+			t.Errorf("%s: display issues = %+v, want %q", tt.name, display.Issues, tt.wantIssue)
+		}
 	}
 }

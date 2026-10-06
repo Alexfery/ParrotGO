@@ -140,6 +140,42 @@ func TestConfigWithoutComponents(t *testing.T) {
 	}
 }
 
+func TestConfigWithPlatformAndBoard(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cfg := project.Config{Platform: "esp32", Target: "esp32-c3", Board: "esp32-c3-devkitm-1"}
+	if err := project.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(project.ConfigFile)
+	want := `{
+  "platform": "esp32",
+  "target": "esp32-c3",
+  "board": "esp32-c3-devkitm-1"
+}
+`
+	if string(data) != want {
+		t.Errorf("parrot.json =\n%s\nwant\n%s", data, want)
+	}
+	got, err := project.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Platform != cfg.Platform || got.Target != cfg.Target || got.Board != cfg.Board {
+		t.Errorf("LoadConfig = %+v, want %+v", got, cfg)
+	}
+}
+
+// Manifests written before Parrot had platforms are ESP32 projects, and are
+// not rewritten to say so.
+func TestPlatformID(t *testing.T) {
+	if got := (project.Config{Target: "esp32"}).PlatformID(); got != "esp32" {
+		t.Errorf("PlatformID without a platform = %q, want esp32", got)
+	}
+	if got := (project.Config{Platform: "stm32", Target: "stm32f401re"}).PlatformID(); got != "stm32" {
+		t.Errorf("PlatformID = %q, want stm32", got)
+	}
+}
+
 func TestLoadConfigNotProject(t *testing.T) {
 	t.Chdir(t.TempDir())
 	_, err := project.LoadConfig()

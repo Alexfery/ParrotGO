@@ -54,6 +54,7 @@ SPI bus component added successfully.
 		t.Fatal(err)
 	}
 	wantManifest := `{
+  "platform": "esp32",
   "target": "esp32",
   "components": [
     {

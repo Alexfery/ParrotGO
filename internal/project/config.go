@@ -17,8 +17,30 @@ const ConfigFile = "parrot.json"
 
 // Config is the content of parrot.json.
 type Config struct {
-	Target     string            `json:"target"` // Parrot target ID, not the ESP-IDF name
+	// Platform is the ID of the project's platform, e.g. "esp32". Manifests
+	// written before Parrot had platforms have none: see PlatformID.
+	Platform string `json:"platform,omitempty"`
+	// Target is the ID of the MCU the project is compiled for, as the
+	// platform names it (e.g. "esp32-c3"), not the SDK's name for it.
+	Target string `json:"target"`
+	// Board is the ID of the development board, e.g. "esp32-c3-devkitm-1";
+	// empty when the project names none. The board's MCU is the target.
+	Board string `json:"board,omitempty"`
+
 	Components []ComponentConfig `json:"components,omitempty"`
+}
+
+// DefaultPlatform is the platform of a project whose parrot.json names none:
+// every project was an ESP32 project before Parrot had platforms. New
+// projects get it too, unless another one is asked for.
+const DefaultPlatform = "esp32"
+
+// PlatformID returns the ID of the project's platform.
+func (cfg Config) PlatformID() string {
+	if cfg.Platform == "" {
+		return DefaultPlatform
+	}
+	return cfg.Platform
 }
 
 // ComponentConfig records a component added with `parrot add`. Settings

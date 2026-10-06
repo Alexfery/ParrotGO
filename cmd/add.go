@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"parrot/internal/components/catalog"
+	"parrot/internal/platforms/esp32"
 	"parrot/internal/project"
 	"parrot/internal/resources"
 	"parrot/internal/targets"
@@ -57,12 +58,15 @@ func gpioSummary(pin int) func(targets.Target, resources.Allocation) []string {
 
 // addComponent runs the steps shared by every `parrot add <type>` command.
 // parrot.json is saved last, so a failed generation never registers the component.
+//
+// The components are ESP-IDF components, so the project must be on the ESP32
+// platform, whose target they are checked against.
 func addComponent(cmd *cobra.Command, spec componentSpec) error {
 	cfg, err := project.LoadConfig()
 	if err != nil {
 		return err
 	}
-	target, err := targets.Get(cfg.Target)
+	target, err := esp32.Target(cfg)
 	if err != nil {
 		return err
 	}

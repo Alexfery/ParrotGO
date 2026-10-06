@@ -4,8 +4,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-
-	"parrot/internal/espidf"
 )
 
 var buildCmd = &cobra.Command{
@@ -20,14 +18,13 @@ func init() {
 }
 
 func runBuild(cmd *cobra.Command, args []string) error {
-	target, runner, err := openIDFProject(cmd)
+	p, err := openProject(cmd)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Parrot build\n\nTarget: %s\n\nBuilding project...\n\n", target.DisplayName)
-	builder := espidf.Builder{Runner: runner}
-	if err := builder.Build(cmd.Context(), ".", target); err != nil {
+	fmt.Fprintf(cmd.OutOrStdout(), "Parrot build\n\n%s\nBuilding project...\n\n", hardwareLines(p.Hardware()))
+	if err := p.Build(cmd.Context()); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "\n✗ Build failed.")
 		return err
 	}

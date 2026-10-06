@@ -83,6 +83,7 @@ func TestAddLEDAndButton(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{
+  "platform": "esp32",
   "target": "esp32",
   "components": [
     {
@@ -167,6 +168,7 @@ func TestAddADC(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{
+  "platform": "esp32",
   "target": "esp32",
   "components": [
     {
@@ -252,6 +254,7 @@ func TestAddPWM(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{
+  "platform": "esp32",
   "target": "esp32",
   "components": [
     {

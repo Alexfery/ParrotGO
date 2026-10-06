@@ -4,8 +4,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-
-	"parrot/internal/espidf"
 )
 
 var monitorCmd = &cobra.Command{
@@ -37,12 +35,11 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	target, runner, err := openIDFProject(cmd)
+	p, err := openProject(cmd)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Parrot monitor\n\nTarget: %s\nPort: %s\n\nStarting serial monitor...\n\n", target.DisplayName, portLabel(port))
-	monitor := espidf.Monitor{Runner: runner}
-	return monitor.Run(cmd.Context(), espidf.MonitorOptions{ProjectDir: ".", Target: target, Port: port})
+	fmt.Fprintf(cmd.OutOrStdout(), "Parrot monitor\n\n%sPort: %s\n\nStarting serial monitor...\n\n", hardwareLines(p.Hardware()), portLabel(port))
+	return p.Monitor(cmd.Context(), port)
 }

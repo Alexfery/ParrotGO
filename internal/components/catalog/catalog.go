@@ -14,6 +14,7 @@ import (
 	"parrot/internal/components/pwm"
 	"parrot/internal/components/sensor/bme280"
 	"parrot/internal/components/spi"
+	"parrot/internal/components/spidevice"
 	"parrot/internal/project"
 	"parrot/internal/resources"
 	"parrot/internal/targets"
@@ -40,7 +41,16 @@ func Claim(c project.ComponentConfig, target targets.Target) (resources.Claim, e
 	if err != nil {
 		return resources.Claim{}, err
 	}
-	return resources.Claim{Component: c.Name, Needs: n}, nil
+	return resources.Claim{Component: c.Name, Kind: conflictKinds[c.Type], Needs: n}, nil
+}
+
+// conflictKinds name the types whose GPIOs are easy to mistake for one
+// another in a conflict: a CS line next to the lines of its bus. Their
+// conflicts say e.g. `GPIO23 is already used by SPI bus "main_bus"`; the other
+// types are called "component".
+var conflictKinds = map[string]string{
+	spi.Type:       "SPI bus",
+	spidevice.Type: "SPI device",
 }
 
 func needs(c project.ComponentConfig, target targets.Target) (resources.Needs, error) {
@@ -61,6 +71,8 @@ func needs(c project.ComponentConfig, target targets.Target) (resources.Needs, e
 		return decodeNeeds[bme280.Config](c, target)
 	case spi.Type:
 		return decodeNeeds[spi.Config](c, target)
+	case spidevice.Type:
+		return decodeNeeds[spidevice.Config](c, target)
 	}
 	return resources.Needs{}, fmt.Errorf("component %q in %s has unknown type %q", c.Name, project.ConfigFile, c.Type)
 }
