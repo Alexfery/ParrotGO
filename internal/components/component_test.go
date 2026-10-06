@@ -23,7 +23,7 @@ func TestNormalizeName(t *testing.T) {
 }
 
 func TestNormalizeNameInvalid(t *testing.T) {
-	for _, in := range []string{"", "2led", "-led", "_led", "status led", "status.led", "../led", "parrot_adc", "Parrot-X"} {
+	for _, in := range []string{"", "2led", "-led", "_led", "status led", "status.led", "../led", "parrot_adc", "Parrot-X", "main", "Main"} {
 		if got, err := components.NormalizeName(in); err == nil {
 			t.Errorf("NormalizeName(%q) = %q, want error", in, got)
 		}

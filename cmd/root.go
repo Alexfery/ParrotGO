@@ -8,19 +8,16 @@ import (
 	"os/signal"
 
 	"github.com/spf13/cobra"
+
+	"parrot/internal/term"
 )
 
-const banner = `   \
-   (o>
-\_//)
- \_/_)
-  _|_
-`
+const about = "Parrot - a developer-friendly CLI for ESP32 and ESP-IDF projects."
 
 var rootCmd = &cobra.Command{
 	Use:          "parrot",
-	Short:        "Parrot - a developer-friendly CLI for ESP32 and ESP-IDF projects.",
-	Long:         banner + "\nParrot - a developer-friendly CLI for ESP32 and ESP-IDF projects.",
+	Short:        about,
+	Long:         banner(false) + "\n" + about,
 	SilenceUsage: true,
 }
 
@@ -29,6 +26,17 @@ var rootCmd = &cobra.Command{
 // idf.py instead of leaving them running.
 func Execute() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// Help goes to stdout, so the mascot is colored only when stdout is a
+	// color terminal; redirected help stays plain text.
+	if term.ColorEnabled(os.Stdout) {
+		rootCmd.Long = banner(true) + "\n" + about
+		// Bare `parrot` greets with the mascot's animation before the help,
+		// while `parrot --help` stays instant.
+		if len(os.Args) == 1 && !animate(ctx, os.Stdout, intro()) {
+			stop()
+			os.Exit(1)
+		}
+	}
 	err := rootCmd.ExecuteContext(ctx)
 	stop()
 	if err != nil {

@@ -21,6 +21,12 @@ const Dir = "components"
 // itself (e.g. parrot_adc); user components cannot use it.
 const ReservedPrefix = "parrot_"
 
+// mainComponent is the project's own component, the main folder with
+// app_main. ESP-IDF adds the components folder after it, and a component
+// added later replaces one of the same name, so components/main would
+// silently replace the project's code.
+const mainComponent = "main"
+
 var validName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
 // NormalizeName validates a user-supplied component name and returns its
@@ -34,6 +40,9 @@ func NormalizeName(name string) (string, error) {
 	normalized := strings.ToLower(strings.ReplaceAll(name, "-", "_"))
 	if strings.HasPrefix(normalized, ReservedPrefix) {
 		return "", fmt.Errorf("invalid component name %q: the %q prefix is reserved for Parrot", name, ReservedPrefix)
+	}
+	if normalized == mainComponent {
+		return "", fmt.Errorf("invalid component name %q: ESP-IDF projects already have a %q component (the main folder, with app_main)", name, mainComponent)
 	}
 	return normalized, nil
 }

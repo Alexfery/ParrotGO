@@ -1,6 +1,7 @@
 package targets_test
 
 import (
+	"slices"
 	"testing"
 
 	"parrot/internal/targets"
@@ -209,5 +210,31 @@ func TestI2C(t *testing.T) {
 		if got := target.I2C.HPControllers; got != want[target.ID] {
 			t.Errorf("%s has %d HP I2C controllers, want %d", target.ID, got, want[target.ID])
 		}
+	}
+}
+
+// Only the GP-SPI hosts that spi_bus_initialize accepts, in allocation order:
+// never SPI0 or SPI1, which serve the flash. ESP32-C3 and ESP32-C6 have one.
+func TestSPI(t *testing.T) {
+	want := map[string][]targets.SPIHost{
+		"esp32":    {{Number: 2, Symbol: "SPI2_HOST"}, {Number: 3, Symbol: "SPI3_HOST"}},
+		"esp32-c3": {{Number: 2, Symbol: "SPI2_HOST"}},
+		"esp32-s3": {{Number: 2, Symbol: "SPI2_HOST"}, {Number: 3, Symbol: "SPI3_HOST"}},
+		"esp32-c6": {{Number: 2, Symbol: "SPI2_HOST"}},
+	}
+	for _, target := range targets.All() {
+		if got := target.SPI.Hosts; !slices.Equal(got, want[target.ID]) {
+			t.Errorf("%s SPI hosts = %v, want %v", target.ID, got, want[target.ID])
+		}
+	}
+}
+
+func TestSPIHostsCannotModifyRegistry(t *testing.T) {
+	esp32 := mustGet(t, "esp32")
+	esp32.SPI.Hosts[0] = targets.SPIHost{Number: 1, Symbol: "SPI1_HOST"}
+	targets.All()[0].SPI.Hosts[1].Symbol = "changed"
+	again := mustGet(t, "esp32").SPI.Hosts
+	if again[0].Symbol != "SPI2_HOST" || again[1].Symbol != "SPI3_HOST" {
+		t.Errorf("registry modified through a returned target: %v", again)
 	}
 }

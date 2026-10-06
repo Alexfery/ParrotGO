@@ -63,5 +63,5 @@ func (s Sensor) ResolveDevice(cfg project.Config) (i2cdevice.Device, error) {
 	if err != nil {
 		return d, err
 	}
-	return d, checkAddress(d)
+	return d, CheckDevice(d)
 }

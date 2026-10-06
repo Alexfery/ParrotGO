@@ -12,9 +12,9 @@ import (
 // data sheet, 6.2 "I²C Interface").
 var Addresses = []uint16{0x76, 0x77}
 
-// checkAddress accepts an I2C device whose address a BME280 can have. Any
+// CheckDevice accepts an I2C device whose address a BME280 can have. Any
 // valid I2C address is fine for a generic device; this rule is the sensor's.
-func checkAddress(d i2cdevice.Device) error {
+func CheckDevice(d i2cdevice.Device) error {
 	if slices.Contains(Addresses, d.Address) {
 		return nil
 	}
